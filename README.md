@@ -34,12 +34,15 @@ tablet needs on top.
 
 ## Download
 
+Build of 2026-11-18 (MediaFire):
+
 | File | What it is |
 |---|---|
-| `lineage-23.2-<date>-UNOFFICIAL-pc_x86_64.img` | Normal installer, with a menu. Needs a keyboard, or the volume and power keys. |
-| `lineage-23.2-<date>-UNOFFICIAL-pc_x86_64-wt20-auto.img` | Unattended installer for a WT20 with no keyboard. **It erases the whole internal disk after a 20-second countdown, Windows included.** |
+| [`lineage-23.2-20261118-UNOFFICIAL-pc_x86_64.img`](https://www.mediafire.com/file/bs0ywlahf2kaelp/lineage-23.2-20261118-UNOFFICIAL-pc_x86_64.img/file) (1.75 GB) | Normal installer, with a menu. Needs a keyboard, or the volume and power keys. |
+| [`lineage-23.2-20261118-UNOFFICIAL-pc_x86_64-wt20-auto.img`](https://www.mediafire.com/file/zyshnm22ohfineu/lineage-23.2-20261118-UNOFFICIAL-pc_x86_64-wt20-auto.img/file) (1.75 GB) | Unattended installer for a WT20 with no keyboard. **It erases the whole internal disk after a 20-second countdown, Windows included.** |
 
-**Links:** DOWNLOAD_LINKS_HERE. Check the files against `SHA256SUMS` after you download them.
+Check the files against [`SHA256SUMS`](SHA256SUMS) after you download them
+(`sha256sum -c SHA256SUMS`, or `certutil -hashfile <file> SHA256` on Windows).
 
 ## Install
 
