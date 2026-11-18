@@ -1,0 +1,114 @@
+diff --git a/compositor/GenericCompositionPlanner.cpp b/compositor/GenericCompositionPlanner.cpp
+index 1a1f911..1c40ec1 100644
+--- a/compositor/GenericCompositionPlanner.cpp
++++ b/compositor/GenericCompositionPlanner.cpp
+@@ -20,12 +20,15 @@
+ #include <tuple>
+ #include <vector>
+ 
++#include <algorithm>
++
+ #include "compositor/FlatteningController.h"
+ #include "compositor/LayerData.h"
+ #include "drm/DrmPlane.h"
+ #include "hwc/HwcDisplay.h"
+ #include "hwc/HwcLayer.h"
+ #include "utils/log.h"
++#include "utils/properties.h"
+ 
+ namespace android::drm_hwcomposer {
+ 
+@@ -43,6 +46,37 @@ const HwcLayer* GetCursorLayer(const std::vector<const HwcLayer*>& layers) {
+   return *it;
+ }
+ 
++// Planes whose "zpos" is absent or immutable keep the hardware stacking
++// (primary at the bottom, overlays above it, cursor on top): DrmPlane never
++// writes such a zpos, so the planner has to honour that order.
++bool PlanesHaveFixedZOrder(const HwcDisplay* display) {
++  const auto planes = display->GetPipe().GetUsablePlanes().first;
++  return std::any_of(planes.begin(), planes.end(), [](const auto& plane) {
++    const auto& zpos = plane->Get()->GetZPosProperty();
++    return !zpos || zpos.IsImmutable();
++  });
++}
++
++// Whether every usable plane can alpha-blend: a "pixel blend mode" property
++// and alpha bits kept in the framebuffers. Intel pre-Skylake has neither, and
++// avoid_using_alpha_bits_for_framebuffer strips the alpha channel anyway.
++bool PlanesCanBlend(const HwcDisplay* display) {
++  if (Properties::ShouldAvoidUsingAlphaBitsForFramebuffer()) {
++    return false;
++  }
++  const auto planes = display->GetPipe().GetUsablePlanes().first;
++  return std::all_of(planes.begin(), planes.end(), [](const auto& plane) {
++    return plane->Get()->HasBlendProperty();
++  });
++}
++
++// Layers that only look right when blended over what is below them
++bool NeedsBlending(const HwcLayer* layer) {
++  const auto& ld = layer->GetLayerData();
++  return ld.pi.alpha != kAlphaOpaque ||
++         (ld.bi && ld.bi->blend_mode != BufferBlendMode::kNone);
++}
++
+ }  // namespace
+ 
+ auto GenericCompositionPlanner::ValidateDisplay(const HwcDisplay* display)
+@@ -97,6 +131,39 @@ auto GenericCompositionPlanner::ValidateDisplay(const HwcDisplay* display)
+   // Initial composition attempt.
+   std::tie(client_start, client_size) = GetClientLayers(display, layers,
+                                                         use_cursor_plane);
++
++  // Planes that cannot be reordered or cannot blend (Intel pre-Skylake: fixed
++  // stacking, no blend property, alpha bits stripped) constrain the plan. The
++  // client target is pre-multiplied and goes to the primary (bottom) plane, so
++  // the client range must be the bottom-most layers; no translucent layer may
++  // sit on an overlay above it (its transparent pixels would scan out as
++  // opaque black); and whatever does not fit the overlays is client too. A
++  // single opaque fullscreen layer still scans out directly.
++  const bool fixed_z = PlanesHaveFixedZOrder(display);
++  const bool no_blend = !PlanesCanBlend(display);
++  if (fixed_z || no_blend) {
++    // the cursor-plane layer (last) is not part of this plan
++    const size_t n = layers.size() - (use_cursor_plane ? 1 : 0);
++    if (client_size != 0 && client_start != 0) {
++      client_size += client_start;
++      client_start = 0;
++    }
++    if (no_blend) {
++      for (size_t z = std::max<size_t>(1, client_start + client_size); z < n;
++           ++z) {
++        if (NeedsBlending(layers[z])) {
++          client_start = 0;
++          client_size = z + 1;
++        }
++      }
++    }
++    const size_t overlays = display->GetPipe().GetUsablePlanes().first.size() -
++                            1;
++    if (client_size != 0 && n - client_size > overlays) {
++      client_size = n - overlays;
++    }
++  }
++
+   bool success = validate_and_test();
+ 
+   // Cursor fallback: convert all non-cursor layers to client composition and
+diff --git a/drm/DrmPlane.h b/drm/DrmPlane.h
+index 76d8f87..9a5c9d4 100644
+--- a/drm/DrmPlane.h
++++ b/drm/DrmPlane.h
+@@ -76,6 +76,11 @@ class DrmPlane : public PipelineBindable<DrmPlane> {
+   auto &GetZPosProperty() const {
+     return zpos_property_;
+   }
++  // KMS "pixel blend mode" present: the plane can alpha-blend over what is
++  // below it. Without it (Intel pre-Skylake) a plane's content is opaque.
++  bool HasBlendProperty() const {
++    return static_cast<bool>(blend_property_);
++  }
+ 
+   auto GetId() const {
+     return plane_->plane_id;

@@ -1,0 +1,52 @@
+diff --git a/optional/external-camera-provider-hal_default-aidl/external_camera_config.xml b/optional/external-camera-provider-hal_default-aidl/external_camera_config.xml
+index 991ff40..853f3e6 100644
+--- a/optional/external-camera-provider-hal_default-aidl/external_camera_config.xml
++++ b/optional/external-camera-provider-hal_default-aidl/external_camera_config.xml
+@@ -1,28 +1,31 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!--
++     Toshiba Portege WT20-B: two UVC webcams through the external camera HAL.
++     Front: "TOSHIBA Web Camera - FHD" (04f2:b470), MJPEG up to 1920x1080 at 30 fps.
++     Rear:  "TOSHIBA Web Camera - 5M"  (04f2:b50b), MJPEG up to 1920x1080 at 30 fps and
++            2592x1944 at 15 fps.
++     The HAL drops a size whose frame rates are all above its fpsBound (it does not lower
++     them), so the bounds must not be below what the cameras deliver.
++-->
+ <ExternalCamera>
+     <Provider>
+-        <ignore> <!-- Internal video devices to be ignored by external camera HAL -->
++        <ignore>
+         </ignore>
+     </Provider>
+-    <!-- See ExternalCameraUtils.cpp for default values of Device configurations below -->
+     <Device>
+-        <!-- Max JPEG buffer size in bytes-->
+-        <MaxJpegBufferSize bytes="3145728"/> <!-- 3MB (~= 1080p YUV420) -->
+-        <!-- Size of v4l2 buffer queue when streaming >= 30fps -->
+-        <!-- Larger value: more request can be cached pipeline (less janky)  -->
+-        <!-- Smaller value: use less memory -->
++        <!-- JPEG buffer for a 5 MP still (the example's 3 MB is sized for 1080p) -->
++        <MaxJpegBufferSize bytes="8388608"/>
+         <NumVideoBuffers count="4"/>
+-        <!-- Size of v4l2 buffer queue when streaming < 30fps -->
+         <NumStillBuffers count="2"/>
+ 
+-        <!-- List of maximum fps for various output sizes -->
+-        <!-- Any image size smaller than the size listed in Limit row will report
+-            fps (as minimum frame duration) up to the fpsBound value. -->
++        <!-- width/height must increase and fpsBound decrease from row to row -->
+         <FpsList>
+-            <!-- width/height must be increasing, fpsBound must be decreasing-->
+-            <Limit width="640" height="480" fpsBound="30.0"/>
+-            <Limit width="1280" height="720" fpsBound="15.0"/>
+-            <Limit width="1920" height="1080" fpsBound="10.0"/>
+-            <!-- image size larger than the last entry will not be supported-->
++            <Limit width="1920" height="1080" fpsBound="30.0"/>
++            <Limit width="2592" height="1944" fpsBound="15.0"/>
+         </FpsList>
++
++        <!-- Matched against the start of the V4L2 card name; other cameras stay EXTERNAL -->
++        <Facing card="TOSHIBA Web Camera - FHD" lens="front"/>
++        <Facing card="TOSHIBA Web Camera - 5M" lens="back"/>
+     </Device>
+ </ExternalCamera>

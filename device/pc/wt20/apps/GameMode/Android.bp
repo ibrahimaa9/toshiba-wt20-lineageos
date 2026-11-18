@@ -1,0 +1,18 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// Toshiba WT20 "Game Mode": per-game resolution scale, FPS cap and game mode through
+// GameManagerService. Hidden/system APIs (IGameManagerService, IBinder.shellCommand,
+// GameManager system APIs) need platform_apis; MANAGE_GAME_MODE is signature|privileged.
+android_app {
+    name: "WT20GameMode",
+    srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
+    platform_apis: true,
+    certificate: "platform",
+    privileged: true,
+    system_ext_specific: true,
+    privapp_allowlist: "privapp_allowlist_org.lineageos.wt20.gamemode.xml",
+}

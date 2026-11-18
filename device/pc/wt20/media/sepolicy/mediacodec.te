@@ -1,0 +1,16 @@
+# apply17c: the FFmpeg VA-API Codec2 HAL (android.hardware.media.c2-service-ffmpeg).
+# It is an AIDL service on /dev/binder: system/sepolicy lets mediacodec add
+# IComponentStore/default (hal_codec2_server) but gives it only vndbinder / hwbinder use, as
+# vendor Codec2 HALs used to be HIDL (the AIDL software store runs as mediaswcodec).
+binder_use(mediacodec)
+
+get_prop(mediacodec, vendor_wt20_hwdec_prop)
+
+# i965_drv_video maps its buffer objects with libdrm_intel's legacy DRM_IOCTL_I915_GEM_MMAP, which
+# vm_mmap()s the object's shmem file inside the ioctl; that file is labelled tmpfs (no
+# type_transition for mediacodec), so without this vaInitialize's post-processing init gets
+# EACCES and crashes on a NULL map (build17, 2026-11-09)
+allow mediacodec tmpfs:file { read write map };
+
+# Already granted by system/sepolicy: /dev/dri/renderD128 (gpu_device), the dmabuf system heap,
+# the graphics allocator. Add sysfs_gpu reads here only if libdrm's drmGetDevice2 shows denials.

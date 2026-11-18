@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">وضع الألعاب</string>
+    <string name="intro">اختر لعبة حتى تغيّر دقّتها أو حد الإطارات أو وضعها. ما يتغيّر أي شي إلا إذا اخترته بنفسك.</string>
+    <string name="no_games">ما لقيت ألعاب مثبّتة. تكدر تضيف أي تطبيق يدوياً.</string>
+    <string name="add_app">إضافة تطبيق يدوياً</string>
+    <string name="add_app_title">اختر التطبيق</string>
+    <string name="no_more_apps">كل التطبيقات موجودة بالقائمة.</string>
+
+    <string name="section_scale">دقة العرض</string>
+    <string name="section_fps">حد الإطارات</string>
+    <string name="section_mode">الوضع</string>
+    <string name="scale_default">100٪ (الافتراضي)</string>
+    <string name="scale_value">%1$d٪</string>
+    <string name="fps_none">بلا حد (الافتراضي)</string>
+    <string name="fps_value">%1$d إطار بالثانية</string>
+    <string name="mode_standard_default">قياسي (الافتراضي)</string>
+    <string name="mode_performance">الأداء</string>
+    <string name="mode_battery">توفير البطارية</string>
+
+    <string name="fps_note">الشاشة 60 هرتز، فحد 45 يتقرّب لأقرب قيمة تدعمها (30 أو 60).</string>
+    <string name="only_scale_note">هذا التطبيق مو مصنّف «لعبة» بالنظام، لذلك تنطبق عليه دقة العرض فقط.</string>
+    <string name="restart_note">الدقة الجديدة تنطبق بعد ما تسدّ اللعبة من التطبيقات الأخيرة وتفتحها من جديد.</string>
+
+    <string name="apply">تطبيق</string>
+    <string name="reset">الافتراضي</string>
+    <string name="cancel">إلغاء</string>
+    <string name="remove">إزالة</string>
+    <string name="remove_confirm">تشيل «%1$s» من القائمة وترجّع إعداداته للافتراضي؟</string>
+
+    <string name="summary_default">افتراضي (بلا تغيير)</string>
+    <string name="summary_scale">الدقة %1$d٪</string>
+    <string name="summary_fps">حد %1$d إطار</string>
+    <string name="summary_only_scale">الدقة فقط</string>
+    <string name="manual_tag">مضاف يدوياً</string>
+
+    <string name="saved">انحفظ.</string>
+    <string name="saved_restart">انحفظ. سدّ اللعبة وافتحها حتى تنطبق الدقة.</string>
+    <string name="fps_failed">انحفظت الدقة والوضع، بس حد الإطارات ما انطبق.</string>
+    <string name="failed">ما انطبق الإعداد (السجل: WT20GameMode).</string>
+
+    <string name="tile_count">%1$d مخصّصة</string>
+    <string name="tile_none">بلا تخصيص</string>
+</resources>

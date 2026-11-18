@@ -1,0 +1,9 @@
+# sensors.iio saves accelerometer and gyroscope calibration data as /data/{accel,gyro}.conf,
+# which no HAL may write; harmless (recalibrates at boot), so just keep the denial out of the
+# logs
+dontaudit hal_sensors_default system_data_root_file:dir write;
+
+# The magnetometer calibration does matter (hard-iron offset ~100 uT, fixed by the tablet's
+# own magnets): it is kept in /data/vendor/sensors/compass.conf
+allow hal_sensors_default sensors_vendor_data_file:dir rw_dir_perms;
+allow hal_sensors_default sensors_vendor_data_file:file create_file_perms;

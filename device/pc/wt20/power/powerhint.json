@@ -1,0 +1,176 @@
+{
+    "Nodes": [
+        {
+            "Name": "CPUMinFreq",
+            "Paths": [
+                "/sys/devices/system/cpu/cpufreq/policy0/scaling_min_freq",
+                "/sys/devices/system/cpu/cpufreq/policy1/scaling_min_freq",
+                "/sys/devices/system/cpu/cpufreq/policy2/scaling_min_freq",
+                "/sys/devices/system/cpu/cpufreq/policy3/scaling_min_freq"
+            ],
+            "Values": [
+                "1600000",
+                "1000000",
+                "0"
+            ],
+            "DefaultIndex": 2,
+            "ResetOnInit": true
+        },
+        {
+            "Name": "CPUMaxFreq",
+            "Paths": [
+                "/sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq",
+                "/sys/devices/system/cpu/cpufreq/policy1/scaling_max_freq",
+                "/sys/devices/system/cpu/cpufreq/policy2/scaling_max_freq",
+                "/sys/devices/system/cpu/cpufreq/policy3/scaling_max_freq"
+            ],
+            "Values": [
+                "9999999",
+                "1600000",
+                "1200000"
+            ],
+            "DefaultIndex": 0,
+            "ResetOnInit": true
+        },
+        {
+            "Name": "TAUClampMin",
+            "Paths": [
+                "/dev/cpuctl/top-app/cpu.uclamp.min"
+            ],
+            "Values": [
+                "60",
+                "30",
+                "0"
+            ],
+            "DefaultIndex": 2,
+            "ResetOnInit": true
+        },
+        {
+            "Name": "GPUMinFreq",
+            "Type": "Property",
+            "Paths": [
+                "vendor.powerhal.wt20.gpu_min"
+            ],
+            "Values": [
+                "600",
+                "450",
+                "400",
+                "default"
+            ],
+            "DefaultIndex": 3,
+            "ResetOnInit": true
+        },
+        {
+            "Name": "GPUMaxFreq",
+            "Type": "Property",
+            "Paths": [
+                "vendor.powerhal.wt20.gpu_max"
+            ],
+            "Values": [
+                "default",
+                "600"
+            ],
+            "DefaultIndex": 0,
+            "ResetOnInit": true
+        },
+        {
+            "Name": "CoolingMethod",
+            "Type": "Property",
+            "Paths": [
+                "vendor.powerhal.wt20.cooling"
+            ],
+            "Values": [
+                "0",
+                "1"
+            ],
+            "DefaultIndex": 0,
+            "ResetOnInit": true
+        }
+    ],
+    "Actions": [
+        {
+            "PowerHint": "INTERACTION",
+            "Node": "TAUClampMin",
+            "Value": "30",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "INTERACTION",
+            "Node": "GPUMinFreq",
+            "Value": "400",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "LAUNCH",
+            "Node": "CPUMinFreq",
+            "Value": "1600000",
+            "Duration": 2000
+        },
+        {
+            "PowerHint": "LAUNCH",
+            "Node": "TAUClampMin",
+            "Value": "60",
+            "Duration": 2000
+        },
+        {
+            "PowerHint": "LAUNCH",
+            "Node": "GPUMinFreq",
+            "Value": "600",
+            "Duration": 2000
+        },
+        {
+            "PowerHint": "GAME",
+            "Node": "CPUMinFreq",
+            "Value": "1000000",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "GAME",
+            "Node": "CPUMaxFreq",
+            "Value": "1600000",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "GAME",
+            "Node": "GPUMinFreq",
+            "Value": "450",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "SUSTAINED_PERFORMANCE",
+            "Node": "CPUMinFreq",
+            "Value": "1000000",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "SUSTAINED_PERFORMANCE",
+            "Node": "CPUMaxFreq",
+            "Value": "1600000",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "SUSTAINED_PERFORMANCE",
+            "Node": "GPUMinFreq",
+            "Value": "450",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "LOW_POWER",
+            "Node": "CPUMaxFreq",
+            "Value": "1200000",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "LOW_POWER",
+            "Node": "GPUMaxFreq",
+            "Value": "600",
+            "Duration": 0
+        },
+        {
+            "PowerHint": "LOW_POWER",
+            "Node": "CoolingMethod",
+            "Value": "1",
+            "Duration": 0
+        }
+    ]
+}

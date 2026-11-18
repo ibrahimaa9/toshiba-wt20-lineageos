@@ -1,0 +1,319 @@
+diff --git a/lineage/lib/main/java/org/lineageos/platform/internal/LineageHardwareService.java b/lineage/lib/main/java/org/lineageos/platform/internal/LineageHardwareService.java
+index 1364807..f9cd412 100644
+--- a/lineage/lib/main/java/org/lineageos/platform/internal/LineageHardwareService.java
++++ b/lineage/lib/main/java/org/lineageos/platform/internal/LineageHardwareService.java
+@@ -7,6 +7,7 @@ package org.lineageos.platform.internal;
+ 
+ import static com.android.server.display.color.DisplayTransformManager.LEVEL_COLOR_MATRIX_GRAYSCALE;
+ import static com.android.server.display.color.DisplayTransformManager.LEVEL_COLOR_MATRIX_NIGHT_DISPLAY;
++import static com.android.server.display.color.DisplayTransformManager.LEVEL_COLOR_MATRIX_SATURATION;
+ 
+ import android.content.Context;
+ import android.content.Intent;
+@@ -22,6 +23,10 @@ import lineageos.app.LineageContextConstants;
+ import lineageos.hardware.ILineageHardwareService;
+ import lineageos.hardware.LineageHardwareManager;
+ 
++import vendor.lineage.livedisplay.FloatRange;
++import vendor.lineage.livedisplay.HSIC;
++import vendor.lineage.livedisplay.IPictureAdjustment;
++
+ /** @hide */
+ public class LineageHardwareService extends LineageSystemService {
+ 
+@@ -157,6 +162,197 @@ public class LineageHardwareService extends LineageSystemService {
+ 
+     }
+ 
++    /**
++     * LiveDisplay picture adjustment in software, for displays without a LiveDisplay HAL
++     * (config_softwarePictureAdjustment): hue, saturation, intensity and contrast as one colour
++     * matrix at its own DisplayTransformManager level, composed with night light, saturation,
++     * grayscale, inversion and the software colour calibration above into SurfaceFlinger's
++     * colour transform (the display controller's CTM or the GPU applies it).
++     */
++    private static final class SoftwarePictureAdjustment extends IPictureAdjustment.Stub {
++
++        // Next to the saturation level ("vivid" colour modes, 150). DisplayTransformManager
++        // multiplies the levels in ascending order and SurfaceFlinger applies M * colour, so
++        // a pixel goes through inversion (300), reduce bright colours (250) and grayscale
++        // (200) first, then this level, then saturation (150) and night light (100)
++        private static final int LEVEL_COLOR_MATRIX_PICTURE_ADJUSTMENT =
++                LEVEL_COLOR_MATRIX_SATURATION + 1;
++
++        // Luminance weights of the hue rotation and saturation matrices (SVG feColorMatrix,
++        // BT.709 rounded): gray stays gray when hue or saturation change
++        private static final float LR = 0.213f;
++        private static final float LG = 0.715f;
++        private static final float LB = 0.072f;
++
++        // Hue in degrees; saturation, intensity and contrast in percent. Bounded so that no
++        // setting leaves an unreadable screen (it is reapplied at every boot).
++        private static final float HUE_MAX = 180f;
++        private static final float SATURATION_MAX = 100f;
++        private static final float INTENSITY_MAX = 50f;
++        private static final float CONTRAST_MAX = 50f;
++
++        private final DisplayTransformManager mDtm;
++        private HSIC mCurrent = hsic(0f, 0f, 0f, 0f, 0f);
++
++        SoftwarePictureAdjustment(DisplayTransformManager dtm) {
++            mDtm = dtm;
++        }
++
++        private static FloatRange range(float min, float max) {
++            final FloatRange r = new FloatRange();
++            r.min = min;
++            r.max = max;
++            r.step = 1f;
++            return r;
++        }
++
++        private static HSIC hsic(float hue, float saturation, float intensity, float contrast,
++                float saturationThreshold) {
++            final HSIC h = new HSIC();
++            h.hue = hue;
++            h.saturation = saturation;
++            h.intensity = intensity;
++            h.contrast = contrast;
++            h.saturationThreshold = saturationThreshold;
++            return h;
++        }
++
++        private static float clamp(float value, float max) {
++            // NaN (a corrupt saved setting) would turn the whole matrix, and the screen, into
++            // NaN at every boot: treat it as no adjustment
++            if (Float.isNaN(value)) {
++                return 0f;
++            }
++            return Math.max(-max, Math.min(max, value));
++        }
++
++        @Override
++        public FloatRange getHueRange() {
++            return range(-HUE_MAX, HUE_MAX);
++        }
++
++        @Override
++        public FloatRange getSaturationRange() {
++            return range(-SATURATION_MAX, SATURATION_MAX);
++        }
++
++        @Override
++        public FloatRange getIntensityRange() {
++            return range(-INTENSITY_MAX, INTENSITY_MAX);
++        }
++
++        @Override
++        public FloatRange getContrastRange() {
++            return range(-CONTRAST_MAX, CONTRAST_MAX);
++        }
++
++        @Override
++        public FloatRange getSaturationThresholdRange() {
++            // Not used by this implementation; LiveDisplay needs a non-empty range
++            return range(0f, 1f);
++        }
++
++        @Override
++        public synchronized HSIC getPictureAdjustment() {
++            return hsic(mCurrent.hue, mCurrent.saturation, mCurrent.intensity, mCurrent.contrast,
++                    mCurrent.saturationThreshold);
++        }
++
++        @Override
++        public HSIC getDefaultPictureAdjustment() {
++            return hsic(0f, 0f, 0f, 0f, 0f);
++        }
++
++        @Override
++        public synchronized void setPictureAdjustment(HSIC adjustment) {
++            if (adjustment == null) {
++                return;
++            }
++            final float hue = clamp(adjustment.hue, HUE_MAX);
++            final float saturation = clamp(adjustment.saturation, SATURATION_MAX);
++            final float intensity = clamp(adjustment.intensity, INTENSITY_MAX);
++            final float contrast = clamp(adjustment.contrast, CONTRAST_MAX);
++            mCurrent = hsic(hue, saturation, intensity, contrast, adjustment.saturationThreshold);
++            final boolean identity =
++                    hue == 0f && saturation == 0f && intensity == 0f && contrast == 0f;
++            mDtm.setColorMatrix(LEVEL_COLOR_MATRIX_PICTURE_ADJUSTMENT,
++                    identity ? null : toMatrix(hue, saturation, intensity, contrast));
++        }
++
++        // Versioned (frozen) AIDL interface: the generated Stub leaves these to the server
++        @Override
++        public int getInterfaceVersion() {
++            return IPictureAdjustment.VERSION;
++        }
++
++        @Override
++        public String getInterfaceHash() {
++            return IPictureAdjustment.HASH;
++        }
++
++        /**
++         * 4x4 colour matrix (column-major, offsets in the last column) applying, in order, the
++         * hue rotation, the saturation, the intensity gain and the contrast about mid-gray.
++         */
++        private static float[] toMatrix(float hue, float saturation, float intensity,
++                float contrast) {
++            final double angle = Math.toRadians(hue);
++            final float c = (float) Math.cos(angle);
++            final float s = (float) Math.sin(angle);
++            // [output][input]
++            final float[][] hueRotation = {
++                {LR + c * (1 - LR) - s * LR, LG - c * LG - s * LG, LB - c * LB + s * (1 - LB)},
++                {LR - c * LR + s * 0.143f, LG + c * (1 - LG) + s * 0.140f, LB - c * LB - s * 0.283f},
++                {LR - c * LR - s * (1 - LR), LG - c * LG + s * LG, LB + c * (1 - LB) + s * LB},
++            };
++            final float sat = 1f + saturation / 100f;
++            final float[][] saturationMatrix = {
++                {LR + (1 - LR) * sat, LG - LG * sat, LB - LB * sat},
++                {LR - LR * sat, LG + (1 - LG) * sat, LB - LB * sat},
++                {LR - LR * sat, LG - LG * sat, LB + (1 - LB) * sat},
++            };
++            final float contrastGain = 1f + contrast / 100f;
++            final float gain = (1f + intensity / 100f) * contrastGain;
++            final float offset = 0.5f * (1f - contrastGain);
++
++            final float[] m = new float[16];
++            for (int row = 0; row < 3; row++) {
++                for (int col = 0; col < 3; col++) {
++                    float sum = 0f;
++                    for (int k = 0; k < 3; k++) {
++                        sum += saturationMatrix[row][k] * hueRotation[k][col];
++                    }
++                    m[col * 4 + row] = gain * sum;
++                }
++                m[12 + row] = offset;
++            }
++            m[15] = 1f;
++            return m;
++        }
++    }
++
++    private SoftwarePictureAdjustment mSoftwarePictureAdjustment;
++
++    // The software picture adjustment, if the device enables it; created on first use, after
++    // ColorDisplayService has published DisplayTransformManager
++    private synchronized IBinder getSoftwarePictureAdjustment() {
++        if (mSoftwarePictureAdjustment == null) {
++            if (!mContext.getResources().getBoolean(
++                    org.lineageos.platform.internal.R.bool.config_softwarePictureAdjustment)) {
++                return null;
++            }
++            final DisplayTransformManager dtm =
++                    LocalServices.getService(DisplayTransformManager.class);
++            if (dtm == null) {
++                Log.w(TAG, "No DisplayTransformManager: no software picture adjustment");
++                return null;
++            }
++            mSoftwarePictureAdjustment = new SoftwarePictureAdjustment(dtm);
++            Log.i(TAG, "Software picture adjustment (no LiveDisplay HAL)");
++        }
++        return mSoftwarePictureAdjustment.asBinder();
++    }
++
+     private LineageHardwareInterface getImpl(Context context) {
+         return new LegacyLineageHardware();
+     }
+@@ -247,6 +443,16 @@ public class LineageHardwareService extends LineageSystemService {
+             }
+             return mLineageHwImpl.setDisplayColorCalibration(rgb);
+         }
++
++        @Override
++        public IBinder getSoftwareFeatureService(int feature) {
++            mContext.enforceCallingOrSelfPermission(
++                    lineageos.platform.Manifest.permission.HARDWARE_ABSTRACTION_ACCESS, null);
++            if (feature == LineageHardwareManager.FEATURE_PICTURE_ADJUSTMENT) {
++                return getSoftwarePictureAdjustment();
++            }
++            return null;
++        }
+     };
+ 
+ }
+diff --git a/lineage/res/res/values/config.xml b/lineage/res/res/values/config.xml
+index e729073..b22a9fd 100644
+--- a/lineage/res/res/values/config.xml
++++ b/lineage/res/res/values/config.xml
+@@ -17,6 +17,10 @@
+ 
+     <!-- Default values for LiveDisplay -->
+     <bool name="config_enableLiveDisplay">true</bool>
++    <!-- LiveDisplay picture adjustment (hue, saturation, intensity, contrast) in software, as
++         a colour matrix through DisplayTransformManager, for displays without a LiveDisplay
++         HAL. Used only when no HAL declares vendor.lineage.livedisplay.IPictureAdjustment. -->
++    <bool name="config_softwarePictureAdjustment">false</bool>
+     <integer name="config_dayColorTemperature">6500</integer>
+     <integer name="config_nightColorTemperature">4800</integer>
+     <integer name="config_outdoorAmbientLux">12000</integer>
+diff --git a/lineage/res/res/values/symbols.xml b/lineage/res/res/values/symbols.xml
+index 289d9b6..ab39ae0 100644
+--- a/lineage/res/res/values/symbols.xml
++++ b/lineage/res/res/values/symbols.xml
+@@ -31,6 +31,7 @@
+ 
+     <!-- LiveDisplay -->
+     <java-symbol type="bool" name="config_enableLiveDisplay" />
++    <java-symbol type="bool" name="config_softwarePictureAdjustment" />
+     <java-symbol type="string" name="live_display_title" />
+     <java-symbol type="string" name="live_display_hint" />
+     <java-symbol type="string" name="live_display_auto" />
+diff --git a/sdk/src/java/lineageos/hardware/ILineageHardwareService.aidl b/sdk/src/java/lineageos/hardware/ILineageHardwareService.aidl
+index 4adceae..63ee8fc 100644
+--- a/sdk/src/java/lineageos/hardware/ILineageHardwareService.aidl
++++ b/sdk/src/java/lineageos/hardware/ILineageHardwareService.aidl
+@@ -15,4 +15,8 @@ interface ILineageHardwareService {
+ 
+     int[] getDisplayColorCalibration();
+     boolean setDisplayColorCalibration(in int[] rgb);
++
++    // A software implementation of a LiveDisplay AIDL interface for the feature, for devices
++    // without its HAL (currently FEATURE_PICTURE_ADJUSTMENT), or null
++    IBinder getSoftwareFeatureService(int feature);
+ }
+diff --git a/sdk/src/java/lineageos/hardware/LineageHardwareManager.java b/sdk/src/java/lineageos/hardware/LineageHardwareManager.java
+index 9e1c894..0be9127 100644
+--- a/sdk/src/java/lineageos/hardware/LineageHardwareManager.java
++++ b/sdk/src/java/lineageos/hardware/LineageHardwareManager.java
+@@ -303,9 +303,13 @@ public final class LineageHardwareManager {
+             case FEATURE_KEY_SWAP:
+                 return ServiceManager.waitForDeclaredService(
+                         IKeySwapper.DESCRIPTOR + "/default");
+-            case FEATURE_PICTURE_ADJUSTMENT:
+-                return ServiceManager.waitForDeclaredService(
++            case FEATURE_PICTURE_ADJUSTMENT: {
++                IBinder b = ServiceManager.waitForDeclaredService(
+                         IPictureAdjustment.DESCRIPTOR + "/default");
++                // No HAL: LineageHardwareService's software picture adjustment, if the device
++                // enables it (config_softwarePictureAdjustment)
++                return b != null ? b : getSoftwareService(feature);
++            }
+             case FEATURE_READING_ENHANCEMENT:
+                 return ServiceManager.waitForDeclaredService(
+                         IReadingEnhancement.DESCRIPTOR + "/default");
+@@ -322,6 +326,20 @@ public final class LineageHardwareManager {
+         return null;
+     }
+ 
++    // A software implementation of the feature's LiveDisplay AIDL interface in
++    // LineageHardwareService (software picture adjustment), or null. Never throws: a failure
++    // here only means the feature is unsupported (this runs in system_server at boot).
++    private IBinder getSoftwareService(int feature) {
++        try {
++            if (checkService()) {
++                return sService.getSoftwareFeatureService(feature);
++            }
++        } catch (RemoteException | RuntimeException e) {
++            Log.w(TAG, "No software implementation of feature " + feature, e);
++        }
++        return null;
++    }
++
+     /**
+      * String version for preference constraints
+      *

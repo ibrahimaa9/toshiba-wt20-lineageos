@@ -1,0 +1,31 @@
+# Syscalls on top of /vendor/etc/seccomp_policy/android.hardware.media.c2-ffmpeg-default-seccomp_policy
+# (our copy of frameworks/av/media/codec2/hal/services/seccomp_policy/android.hardware.media.c2-default-x86_64.policy).
+# A missing one kills the service with SIGSYS: look for "type=1326" audit lines (syscall=NNN)
+# in dmesg / logcat and add the x86_64 name here.
+#
+# raspberry-vanilla (FFmpeg)
+eventfd2: 1
+sched_getaffinity: 1
+sysinfo: 1
+# libva / i965_drv_video / libdrm (render node, driver dlopen, GEM), the gralloc mapper
+# (minigbm gbm_mesa: render node glob, Mesa) and FFmpeg's threads
+getdents64: 1
+getrandom: 1
+fcntl: 1
+dup3: 1
+pipe2: 1
+kcmp: 1
+rt_sigprocmask: 1
+rt_sigaction: 1
+sched_getparam: 1
+sched_getscheduler: 1
+sched_setaffinity: 1
+clock_getres: 1
+clock_nanosleep: 1
+epoll_create1: 1
+epoll_ctl: 1
+epoll_pwait: 1
+geteuid: 1
+getgid: 1
+getegid: 1
+flock: 1

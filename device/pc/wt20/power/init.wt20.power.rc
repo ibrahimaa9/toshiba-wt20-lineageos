@@ -1,0 +1,31 @@
+# WT20 power HAL (apply15m): the perfmgr HAL sets these vendor.powerhal.wt20.* properties
+# (property nodes in powerhint.json) and vendor_init applies them, once per change.
+#   i915 GPU limits (card1; card0 is simpledrm): i915 rejects a min above the current max or a
+#   max below the current min, so every floor used (400-600) is <= the Battery Saver ceiling
+#   (600). "default" puts back the boot limits, RPn and RP0.
+#   Toshiba cooling method (TOS6208): 0 = maximum performance (firmware default), 1 = battery
+#   optimized (Battery Saver).
+
+on property:vendor.powerhal.wt20.gpu_min=default
+    copy /sys/class/drm/card1/gt_RPn_freq_mhz /sys/class/drm/card1/gt_min_freq_mhz
+
+on property:vendor.powerhal.wt20.gpu_min=600
+    write /sys/class/drm/card1/gt_min_freq_mhz 600
+
+on property:vendor.powerhal.wt20.gpu_min=450
+    write /sys/class/drm/card1/gt_min_freq_mhz 450
+
+on property:vendor.powerhal.wt20.gpu_min=400
+    write /sys/class/drm/card1/gt_min_freq_mhz 400
+
+on property:vendor.powerhal.wt20.gpu_max=default
+    copy /sys/class/drm/card1/gt_RP0_freq_mhz /sys/class/drm/card1/gt_max_freq_mhz
+
+on property:vendor.powerhal.wt20.gpu_max=600
+    write /sys/class/drm/card1/gt_max_freq_mhz 600
+
+on property:vendor.powerhal.wt20.cooling=0
+    write /sys/devices/LNXSYSTM:00/LNXSYBUS:00/TOS6208:00/cooling_method 0
+
+on property:vendor.powerhal.wt20.cooling=1
+    write /sys/devices/LNXSYSTM:00/LNXSYBUS:00/TOS6208:00/cooling_method 1

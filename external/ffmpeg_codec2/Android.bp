@@ -1,0 +1,87 @@
+// Copyright (C) 2022 Michael Goffioul <michael.goffioul@gmail.com>
+// Copyright (C) 2025 KonstaKANG
+//
+// SPDX-License-Identifier: Apache-2.0
+
+// WT20 (Toshiba WT20-B, Broadwell HD 5300): H.264, VP8 and MPEG-2 decoders on FFmpeg's VA-API
+// hwaccel (i965_drv_video), installed as a plain vendor HAL (no APEX). Built only when
+// WT20_HW_VIDEO_DECODE puts external/ffmpeg and external/ffmpeg_codec2 into
+// PRODUCT_SOONG_NAMESPACES (device/pc/wt20/wt20.mk). The .rc (service vendor.media.c2.wt20)
+// and the VINTF fragment (IComponentStore/default) are in device/pc/wt20/media, which owns
+// them: they are not installed from here.
+soong_namespace {
+    imports: [
+        "external/ffmpeg",
+    ],
+}
+
+cc_binary {
+    name: "android.hardware.media.c2-service-ffmpeg",
+    relative_install_path: "hw",
+    vendor: true,
+    defaults: [
+        "libcodec2-aidl-defaults",
+    ],
+    srcs: [
+        "C2FFMPEGComponentInterface.cpp",
+        "C2FFMPEGComponentStore.cpp",
+        "C2FFMPEGVaapi.cpp",
+        "C2FFMPEGVideoDecodeComponent.cpp",
+        "C2FFMPEGVideoDecodeInterface.cpp",
+        "main.cpp",
+    ],
+    header_libs: [
+        "libffmpeg_headers",
+        "libhardware_headers",
+        // <cros_gralloc/cros_gralloc_handle.h> (minigbm-upstream is the gralloc of this device)
+        "minigbm_headers_upstream",
+    ],
+    static_libs: [
+        "libffmpeg_utils",
+    ],
+    // libbase, liblog, libutils, libcodec2, libcodec2_vndk, libcodec2_hal_common,
+    // libcodec2_aidl, libbinder_ndk and android.hardware.media.c2-V1-ndk come from
+    // libcodec2-aidl-defaults.
+    shared_libs: [
+        "android.hardware.graphics.common@1.0",
+        "libavcodec",
+        "libavservices_minijail",
+        "libavutil",
+        "libcodec2_soft_common",
+        "libcutils",
+        "libgralloctypes",
+        // gralloctypes/Gralloc4.h (plane layouts) uses hidl_string from the mapper 4.0 types
+        "libhidlbase",
+        "libstagefright_foundation",
+        "libswscale",
+        "libui",
+        "libva",
+    ],
+    required: [
+        "android.hardware.media.c2-ffmpeg-default-seccomp_policy",
+        "android.hardware.media.c2-ffmpeg-extended-seccomp_policy",
+    ],
+    compile_multilib: "64",
+    enabled: false,
+    arch: {
+        x86_64: {
+            enabled: true,
+        },
+    },
+}
+
+// The seccomp policies main.cpp loads, /vendor/etc/seccomp_policy/<module name>:
+// frameworks/av's default Codec2 policy (x86_64 on this device) and our additions.
+prebuilt_etc {
+    name: "android.hardware.media.c2-ffmpeg-default-seccomp_policy",
+    src: ":android.hardware.media.c2-default-seccomp_policy",
+    sub_dir: "seccomp_policy",
+    vendor: true,
+}
+
+prebuilt_etc {
+    name: "android.hardware.media.c2-ffmpeg-extended-seccomp_policy",
+    src: "android.hardware.media.c2-ffmpeg-extended-seccomp_policy",
+    sub_dir: "seccomp_policy",
+    vendor: true,
+}

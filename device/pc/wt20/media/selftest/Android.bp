@@ -1,0 +1,43 @@
+//
+// WT20 hardware video decode self-test (apply17c; options.mk WT20_HW_VIDEO_DECODE):
+// /vendor/bin/wt20_c2_vaapi_selftest decodes the vectors in /vendor/etc/wt20_hwdec in software,
+// with VA-API, and with VA-API + the HAL's VPP copy into gralloc, and compares the per-frame
+// NV12 pictures (H.264 / VP8 bit exact, MPEG-2 by PSNR; see the source). Its own namespace, to
+// see external/ffmpeg's libraries; wt20.mk exports it only with the switch on, but Soong parses
+// it and resolves the import on every build.
+//
+
+soong_namespace {
+    imports: [
+        "external/ffmpeg",
+    ],
+}
+
+cc_binary {
+    name: "wt20_c2_vaapi_selftest",
+    vendor: true,
+    srcs: ["wt20_c2_vaapi_selftest.cpp"],
+    header_libs: [
+        "libcutils_headers",
+        "libffmpeg_headers",
+        "minigbm_headers_upstream",
+    ],
+    shared_libs: [
+        "libavcodec",
+        "libavutil",
+        "libnativewindow",
+        "libva",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+        "-Wno-deprecated-declarations",
+    ],
+    enabled: false,
+    arch: {
+        x86_64: {
+            enabled: true,
+        },
+    },
+}

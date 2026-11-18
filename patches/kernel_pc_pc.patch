@@ -1,0 +1,566 @@
+diff --git a/drivers/acpi/ac.c b/drivers/acpi/ac.c
+index 7c5b040a8..a28810553 100644
+--- a/drivers/acpi/ac.c
++++ b/drivers/acpi/ac.c
+@@ -51,12 +51,14 @@ static SIMPLE_DEV_PM_OPS(acpi_ac_pm, NULL, acpi_ac_resume);
+ 
+ static int ac_sleep_before_get_state_ms;
+ static int ac_only;
++static bool ac_wakeup_on_change;
+ 
+ struct acpi_ac {
+ 	struct power_supply *charger;
+ 	struct power_supply_desc charger_desc;
+ 	struct acpi_device *device;
+ 	unsigned long long state;
++	unsigned long long notified_state;	/* state acpi_ac_notify() saw last */
+ 	struct notifier_block battery_nb;
+ };
+ 
+@@ -146,6 +148,20 @@ static void acpi_ac_notify(acpi_handle handle, u32 event, void *data)
+ 						  (u32) ac->state);
+ 		acpi_notifier_call_chain(adev, event, (u32) ac->state);
+ 		power_supply_changed(ac->charger);
++		/*
++		 * ac_wakeup_on_change: power_supply_changed() is only a "soft"
++		 * wakeup event, which suspend-to-idle honours only while user
++		 * space has armed the wakeup count (/sys/power/wakeup_count). On
++		 * the Toshiba Portege WT20-B this notification arrives in-band
++		 * during suspend-to-idle (firmware event GPE, see s2idle_event_gpe
++		 * in sleep.c), so report a real plug/unplug as a wakeup event of
++		 * the adapter as well; acpi_pm_wakeup_event() makes it a "hard"
++		 * one in suspend-to-idle. acpi_ac_battery_notify() refreshes
++		 * ac->state too, hence the separate notified_state.
++		 */
++		if (ac_wakeup_on_change && ac->state != ac->notified_state)
++			acpi_pm_wakeup_event(&adev->dev);
++		ac->notified_state = ac->state;
+ 	}
+ }
+ 
+@@ -181,6 +197,12 @@ static int __init ac_only_quirk(const struct dmi_system_id *d)
+ 	return 0;
+ }
+ 
++static int __init ac_wakeup_on_change_quirk(const struct dmi_system_id *d)
++{
++	ac_wakeup_on_change = true;
++	return 0;
++}
++
+ /* Please keep this list alphabetically sorted */
+ static const struct dmi_system_id ac_dmi_table[]  __initconst = {
+ 	{
+@@ -198,6 +220,14 @@ static const struct dmi_system_id ac_dmi_table[]  __initconst = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "32597CG"),
+ 		},
+ 	},
++	{
++		/* Toshiba Portege WT20-B, see the comment in acpi_ac_notify() */
++		.callback = ac_wakeup_on_change_quirk,
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "PORTEGE WT20"),
++		},
++	},
+ 	{},
+ };
+ 
+@@ -236,6 +266,8 @@ static int acpi_ac_probe(struct platform_device *pdev)
+ 		goto err_release_ac;
+ 	}
+ 
++	ac->notified_state = ac->state;
++
+ 	pr_info("%s [%s] (%s-line)\n", acpi_device_name(adev),
+ 		acpi_device_bid(adev), str_on_off(ac->state));
+ 
+@@ -247,6 +279,10 @@ static int acpi_ac_probe(struct platform_device *pdev)
+ 	if (result)
+ 		goto err_unregister;
+ 
++	/* wakeup source for acpi_pm_wakeup_event() (power/wakeup of ACPI0003:00) */
++	if (ac_wakeup_on_change)
++		device_init_wakeup(&adev->dev, true);
++
+ 	return 0;
+ 
+ err_unregister:
+@@ -282,6 +318,8 @@ static void acpi_ac_remove(struct platform_device *pdev)
+ 
+ 	acpi_dev_remove_notify_handler(ac->device, ACPI_ALL_NOTIFY,
+ 				       acpi_ac_notify);
++	if (ac_wakeup_on_change)
++		device_init_wakeup(&ac->device->dev, false);
+ 	power_supply_unregister(ac->charger);
+ 	unregister_acpi_notifier(&ac->battery_nb);
+ 
+diff --git a/drivers/acpi/battery.c b/drivers/acpi/battery.c
+index a33d60e62..353dd1a7c 100644
+--- a/drivers/acpi/battery.c
++++ b/drivers/acpi/battery.c
+@@ -28,6 +28,8 @@
+ 
+ #include <acpi/battery.h>
+ 
++#include "internal.h"	/* acpi_s2idle_wakeup() */
++
+ #define ACPI_BATTERY_VALUE_UNKNOWN 0xFFFFFFFF
+ #define ACPI_BATTERY_CAPACITY_VALID(capacity) \
+ 	((capacity) != 0 && (capacity) != ACPI_BATTERY_VALUE_UNKNOWN)
+@@ -51,6 +53,7 @@ MODULE_LICENSE("GPL");
+ 
+ static int battery_bix_broken_package;
+ static int battery_notification_delay_ms;
++static bool battery_skip_unchanged_status;
+ static int battery_ac_is_broken;
+ static unsigned int cache_time = 1000;
+ module_param(cache_time, uint, 0644);
+@@ -125,6 +128,11 @@ struct acpi_battery {
+ 	int state;
+ 	int power_unit;
+ 	unsigned long flags;
++	/* battery_skip_unchanged_status: what the last forwarded status notification showed */
++	int notified_state;
++	int notified_percent;
++	int notified_present;
++	unsigned long notified_time;
+ };
+ 
+ #define to_acpi_battery(x) power_supply_get_drvdata(x)
+@@ -1067,6 +1075,59 @@ static void acpi_battery_refresh(struct acpi_battery *battery)
+ }
+ 
+ /* Driver Interface */
++/* Charge percent as user space sees it, -1 if unknown */
++static int acpi_battery_percent(struct acpi_battery *battery)
++{
++	int full = ACPI_BATTERY_VALUE_UNKNOWN;
++
++	if (ACPI_BATTERY_CAPACITY_VALID(battery->full_charge_capacity))
++		full = battery->full_charge_capacity;
++	else if (ACPI_BATTERY_CAPACITY_VALID(battery->design_capacity))
++		full = battery->design_capacity;
++	if (battery->capacity_now == ACPI_BATTERY_VALUE_UNKNOWN ||
++	    full == ACPI_BATTERY_VALUE_UNKNOWN || full == 0)
++		return -1;
++	return battery->capacity_now * 100 / full;
++}
++
++/*
++ * battery_skip_unchanged_status: some ECs (Toshiba Portege WT20-B) send a status-change
++ * notification every couple of seconds whether anything changed or not. Each forwarded one is
++ * a uevent plus an ACPI netlink event, i.e. a wakeup event, so such a machine can never stay
++ * suspended. Forward a status notification only when the charge state, presence or percent
++ * changed, or a minute after the last one so energy and rate readings still refresh.
++ */
++static bool acpi_battery_status_unchanged(struct acpi_battery *battery, u32 event)
++{
++	int percent = acpi_battery_percent(battery);
++	int present = acpi_battery_present(battery);
++
++	if (!battery_skip_unchanged_status || event != ACPI_BATTERY_NOTIFY_STATUS)
++		return false;
++	/*
++	 * In suspend-to-idle (this then runs from the in-band dispatch of the
++	 * firmware event GPE, see s2idle_event_gpe in sleep.c) forward only a
++	 * change of charge state or presence: a forwarded notification calls
++	 * power_supply_changed(), a wakeup event, so a percent step or the
++	 * one-minute refresh would resume the system for nothing. They go out
++	 * with the first notification after resume. A critical battery still
++	 * wakes the system from acpi_battery_update(), and the critical bit is
++	 * part of the state.
++	 */
++	if (battery->notified_time &&
++	    battery->state == battery->notified_state &&
++	    present == battery->notified_present &&
++	    (acpi_s2idle_wakeup() ||
++	     (percent == battery->notified_percent &&
++	      time_before(jiffies, battery->notified_time + 60 * HZ))))
++		return true;
++	battery->notified_state = battery->state;
++	battery->notified_percent = percent;
++	battery->notified_present = present;
++	battery->notified_time = jiffies;
++	return false;
++}
++
+ static void acpi_battery_notify(acpi_handle handle, u32 event, void *data)
+ {
+ 	struct acpi_device *device = data;
+@@ -1090,6 +1151,8 @@ static void acpi_battery_notify(acpi_handle handle, u32 event, void *data)
+ 	if (event == ACPI_BATTERY_NOTIFY_INFO)
+ 		acpi_battery_refresh(battery);
+ 	acpi_battery_update(battery, false);
++	if (acpi_battery_status_unchanged(battery, event))
++		return;
+ 	acpi_bus_generate_netlink_event(device->pnp.device_class,
+ 					dev_name(&device->dev), event,
+ 					acpi_battery_present(battery));
+@@ -1153,6 +1216,13 @@ battery_ac_is_broken_quirk(const struct dmi_system_id *d)
+ 	return 0;
+ }
+ 
++static int __init
++battery_skip_unchanged_status_quirk(const struct dmi_system_id *d)
++{
++	battery_skip_unchanged_status = true;
++	return 0;
++}
++
+ static const struct dmi_system_id bat_dmi_table[] __initconst = {
+ 	{
+ 		/* NEC LZ750/LS */
+@@ -1189,6 +1259,14 @@ static const struct dmi_system_id bat_dmi_table[] __initconst = {
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "Surface Go 3"),
+ 		},
+ 	},
++	{
++		/* Toshiba Portege WT20-B: EC notifies battery status every ~1.7 s */
++		.callback = battery_skip_unchanged_status_quirk,
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "PORTEGE WT20"),
++		},
++	},
+ 	{},
+ };
+ 
+diff --git a/drivers/acpi/button.c b/drivers/acpi/button.c
+index 6d7c41398..8735769ff 100644
+--- a/drivers/acpi/button.c
++++ b/drivers/acpi/button.c
+@@ -175,6 +175,7 @@ struct acpi_button {
+ 	int last_state;
+ 	ktime_t last_time;
+ 	bool suspended;
++	bool wakeup_pending;	/* notified while suspended: this button woke the system */
+ 	bool lid_state_initialized;
+ };
+ 
+@@ -452,8 +453,10 @@ static void acpi_button_notify(acpi_handle handle, u32 event, void *data)
+ 	acpi_pm_wakeup_event(&device->dev);
+ 
+ 	button = acpi_driver_data(device);
+-	if (button->suspended)
++	if (button->suspended) {
++		button->wakeup_pending = true;
+ 		return;
++	}
+ 
+ 	input = button->input;
+ 	keycode = test_bit(KEY_SLEEP, input->keybit) ? KEY_SLEEP : KEY_POWER;
+@@ -502,13 +505,20 @@ static int acpi_button_resume(struct device *dev)
+ 		acpi_lid_initialize_state(device);
+ 	}
+ 
+-	if (button->type == ACPI_BUTTON_TYPE_POWER) {
++	/*
++	 * Tell userspace the power button woke the system, but only then: tablets
++	 * resume for RTC alarms and other wakeups too, and an unconditional
++	 * KEY_WAKEUP would switch their screen on every time (Toshiba WT20-B).
++	 */
++	if (button->type == ACPI_BUTTON_TYPE_POWER &&
++	    (button->wakeup_pending || acpi_power_button_wakeup_pending())) {
+ 		input = button->input;
+ 		input_report_key(input, KEY_WAKEUP, 1);
+ 		input_sync(input);
+ 		input_report_key(input, KEY_WAKEUP, 0);
+ 		input_sync(input);
+ 	}
++	button->wakeup_pending = false;
+ 	return 0;
+ }
+ #endif
+diff --git a/drivers/acpi/sleep.c b/drivers/acpi/sleep.c
+index 0b7fa4a8c..77916f144 100644
+--- a/drivers/acpi/sleep.c
++++ b/drivers/acpi/sleep.c
+@@ -106,6 +106,12 @@ EXPORT_SYMBOL_GPL(acpi_target_system_state);
+ 
+ static bool pwr_btn_event_pending;
+ 
++/* For the button driver's resume: did the fixed power button wake the system (S3)? */
++bool acpi_power_button_wakeup_pending(void)
++{
++	return pwr_btn_event_pending;
++}
++
+ /*
+  * The ACPI specification wants us to save NVS memory regions during hibernation
+  * and to restore them during the subsequent resume.  Windows does that also for
+@@ -755,6 +761,70 @@ int acpi_s2idle_prepare(void)
+ 	return 0;
+ }
+ 
++/*
++ * s2idle_event_gpe: GPE through which the firmware reports EC events on a
++ * platform without an ACPI EC device, or U32_MAX for none.
++ *
++ * The Toshiba Portege WT20-B has no ACPI EC (no PNP0C09 device, no ECDT). Its
++ * firmware services the embedded controller in SMM, leaves event flags in
++ * memory and raises the PCH software GPE (0x62, SWGPE); _L62 then Notify()s
++ * the AC adapter, the batteries, the lid, the thermal zone and the Toshiba
++ * VALZ device as those flags say. The EC raises it about every 1.7 s with a
++ * battery status that has not changed. PNP0C0C's _PRW names GPE 0x62, so it
++ * stays enabled in suspend-to-idle, and with no EC acpi_ec_dispatch_gpe()
++ * takes any enabled GPE status bit as a wakeup: the system went back to a
++ * full resume within ~2 s of every suspend.
++ */
++static u32 s2idle_event_gpe = U32_MAX;
++
++static int __init s2idle_event_gpe_quirk(const struct dmi_system_id *d)
++{
++	s2idle_event_gpe = (u32)(unsigned long)d->driver_data;
++	return 0;
++}
++
++static const struct dmi_system_id s2idle_event_gpe_dmi_table[] __initconst = {
++	{
++		/* Toshiba Portege WT20-B: EC events via the software GPE, _L62 */
++		.callback = s2idle_event_gpe_quirk,
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "PORTEGE WT20"),
++		},
++		.driver_data = (void *)0x62,
++	},
++	{}
++};
++
++/*
++ * Check the GPEs after an SCI wakeup from suspend-to-idle. Normally that is
++ * acpi_ec_dispatch_gpe(). With s2idle_event_gpe, treat that GPE the way
++ * acpi_ec_dispatch_gpe() treats the EC GPE: a status bit set for any other
++ * enabled GPE is a wakeup; otherwise cancel the SCI wakeup and dispatch the
++ * GPE in-band (its _Lxx method is queued as from the SCI handler).
++ * acpi_s2idle_wake() then waits for the method and the Notify() handlers it
++ * queued (acpi_os_wait_events_complete()) and resumes only if one of them
++ * reported a wakeup event (lid opened: button.c; battery critical:
++ * battery.c; adapter plugged or unplugged: ac.c). Fixed events, so the fixed
++ * power button, are checked before this and are not affected. Should an ACPI
++ * EC show up after all, its GPE is handled the normal way.
++ */
++static bool acpi_s2idle_dispatch_gpe(void)
++{
++	if (s2idle_event_gpe == U32_MAX || first_ec)
++		return acpi_ec_dispatch_gpe();
++
++	if (acpi_any_gpe_status_set(s2idle_event_gpe))
++		return true;
++
++	pm_system_cancel_wakeup();
++
++	if (acpi_dispatch_gpe(NULL, s2idle_event_gpe) == ACPI_INTERRUPT_HANDLED)
++		pm_pr_dbg("ACPI event GPE %02X dispatched\n", s2idle_event_gpe);
++
++	return false;
++}
++
+ bool acpi_s2idle_wake(void)
+ {
+ 	if (!acpi_sci_irq_valid())
+@@ -789,9 +859,10 @@ bool acpi_s2idle_wake(void)
+ 
+ 		/*
+ 		 * Check non-EC GPE wakeups and if there are none, cancel the
+-		 * SCI-related wakeup and dispatch the EC GPE.
++		 * SCI-related wakeup and dispatch the EC GPE (or the firmware
++		 * event GPE, see s2idle_event_gpe).
+ 		 */
+-		if (acpi_ec_dispatch_gpe()) {
++		if (acpi_s2idle_dispatch_gpe()) {
+ 			pm_pr_dbg("ACPI non-EC GPE wakeup\n");
+ 			return true;
+ 		}
+@@ -876,6 +947,7 @@ static void __init acpi_sleep_suspend_setup(void)
+ 		suspend_set_ops(old_suspend_ordering ?
+ 				&acpi_suspend_ops_old : &acpi_suspend_ops);
+ 
++	dmi_check_system(s2idle_event_gpe_dmi_table);
+ 	acpi_s2idle_setup();
+ }
+ 
+diff --git a/drivers/gpu/drm/i915/display/intel_backlight.c b/drivers/gpu/drm/i915/display/intel_backlight.c
+index 4d93781f2..0d897a053 100644
+--- a/drivers/gpu/drm/i915/display/intel_backlight.c
++++ b/drivers/gpu/drm/i915/display/intel_backlight.c
+@@ -4,7 +4,9 @@
+  */
+ 
+ #include <linux/backlight.h>
++#include <linux/dmi.h>
+ #include <linux/kernel.h>
++#include <linux/moduleparam.h>
+ #include <linux/pwm.h>
+ #include <linux/string_helpers.h>
+ 
+@@ -335,6 +337,7 @@ static void lpt_disable_backlight(const struct drm_connector_state *old_conn_sta
+ {
+ 	struct intel_connector *connector = to_intel_connector(old_conn_state->connector);
+ 	struct drm_i915_private *i915 = to_i915(connector->base.dev);
++	struct intel_panel *panel = &connector->panel;
+ 	u32 tmp;
+ 
+ 	intel_backlight_set_pwm_level(old_conn_state, level);
+@@ -355,6 +358,18 @@ static void lpt_disable_backlight(const struct drm_connector_state *old_conn_sta
+ 	}
+ 
+ 	intel_de_rmw(i915, BLC_PWM_PCH_CTL1, BLM_PCH_PWM_ENABLE, 0);
++
++	/*
++	 * WT20 fine backlight steps (see lpt_fine_backlight_setup()): with the
++	 * PWM off, give the firmware its increment and period back, so that the
++	 * firmware after a reboot, or a kernel without the option, finds the
++	 * registers as it left them. lpt_enable_backlight() sets both again.
++	 */
++	if (panel->backlight.fw_pwm_level_max) {
++		intel_de_rmw(i915, SOUTH_CHICKEN2, LPT_PWM_GRANULARITY, 0);
++		intel_de_write(i915, BLC_PWM_PCH_CTL2,
++			       panel->backlight.fw_pwm_level_max << 16);
++	}
+ }
+ 
+ static void pch_disable_backlight(const struct drm_connector_state *old_conn_state, u32 val)
+@@ -1212,6 +1227,82 @@ static u32 get_backlight_min_vbt(struct intel_connector *connector)
+ 	return scale(min, 0, 255, 0, panel->backlight.pwm_level_max);
+ }
+ 
++/*
++ * Toshiba Portege WT20-B (Broadwell-Y, Wildcat Point-LP PCH): the firmware
++ * programs the PCH PWM with the default 128-clock increment and a period of 18
++ * increments (24 MHz / (18 * 128) = ~10.4 kHz), so the backlight has only 18
++ * steps and Android's brightness slider moves in visible jumps.
++ *
++ * With i915.wt20_fine_backlight=1, switch to the alternate 16-clock increment
++ * (SOUTH_CHICKEN2 LPT_PWM_GRANULARITY) and multiply the period by 8: the PWM
++ * frequency the panel sees stays the same, and the period and duty cycle get
++ * 8 times as many steps (144). A duty cycle the firmware left running is
++ * scaled the same way, so the brightness does not change at the switch.
++ * lpt_disable_backlight() puts the firmware's increment and period back.
++ *
++ * Off by default. Only on the WT20 (DMI), only when the firmware left the
++ * default increment and its own period in BLC_PWM_PCH_CTL2 (not the VBT
++ * fallback), and not when the CPU PWM was in use.
++ */
++#define LPT_FINE_BACKLIGHT_MUL	8	/* 128-clock / 16-clock increment */
++
++static bool wt20_fine_backlight;
++module_param(wt20_fine_backlight, bool, 0400);
++MODULE_PARM_DESC(wt20_fine_backlight,
++		 "Toshiba Portege WT20: 8x finer PCH PWM backlight steps at the same PWM frequency (default: false)");
++
++static const struct dmi_system_id lpt_fine_backlight_dmi_table[] = {
++	{
++		/* Toshiba Portege WT20-B: firmware PWM period 18, 128-clock increment */
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "PORTEGE WT20"),
++		},
++	},
++	{}
++};
++
++static void lpt_fine_backlight_setup(struct intel_connector *connector,
++				     enum pipe pipe, u32 pch_ctl1, u32 hw_max)
++{
++	struct drm_i915_private *i915 = to_i915(connector->base.dev);
++	struct intel_panel *panel = &connector->panel;
++	u32 fw_max = panel->backlight.pwm_level_max;
++	u32 fine_max = fw_max * LPT_FINE_BACKLIGHT_MUL;
++	u32 duty;
++
++	if (!wt20_fine_backlight || !dmi_check_system(lpt_fine_backlight_dmi_table))
++		return;
++
++	if (!HAS_PCH_LPT(i915) || !fw_max || hw_max != fw_max ||
++	    fine_max > BACKLIGHT_DUTY_CYCLE_MASK) {
++		drm_info(&i915->drm,
++			 "[CONNECTOR:%d:%s] WT20 fine backlight steps not used (PWM period %u, firmware %u)\n",
++			 connector->base.base.id, connector->base.name, fw_max, hw_max);
++		return;
++	}
++
++	if (pch_ctl1 & BLM_PCH_PWM_ENABLE) {
++		/*
++		 * Period and duty cycle are one register, so the duty ratio is
++		 * the same before and after each of the two writes.
++		 */
++		duty = min(lpt_get_backlight(connector, pipe), fw_max);
++		intel_de_write(i915, BLC_PWM_PCH_CTL2,
++			       (fine_max << 16) | (duty * LPT_FINE_BACKLIGHT_MUL));
++		intel_de_rmw(i915, SOUTH_CHICKEN2, 0, LPT_PWM_GRANULARITY);
++	}
++
++	panel->backlight.fw_pwm_level_max = fw_max;
++	panel->backlight.alternate_pwm_increment = true;
++	panel->backlight.pwm_level_max = fine_max;
++	panel->backlight.pwm_level_min = get_backlight_min_vbt(connector);
++
++	drm_info(&i915->drm,
++		 "[CONNECTOR:%d:%s] WT20 fine backlight steps: PWM period %u -> %u (16-clock increment)\n",
++		 connector->base.base.id, connector->base.name, fw_max, fine_max);
++}
++
+ static int lpt_setup_backlight(struct intel_connector *connector, enum pipe unused)
+ {
+ 	struct drm_i915_private *i915 = to_i915(connector->base.dev);
+@@ -1262,6 +1353,9 @@ static int lpt_setup_backlight(struct intel_connector *connector, enum pipe unus
+ 			       cpu_ctl2 & ~BLM_PWM_ENABLE);
+ 	}
+ 
++	if (!alt && !cpu_mode)
++		lpt_fine_backlight_setup(connector, unused, pch_ctl1, pch_ctl2 >> 16);
++
+ 	drm_dbg_kms(&i915->drm,
+ 		    "[CONNECTOR:%d:%s] Using native PCH PWM for backlight control\n",
+ 		    connector->base.base.id, connector->base.name);
+diff --git a/drivers/gpu/drm/i915/display/intel_display_types.h b/drivers/gpu/drm/i915/display/intel_display_types.h
+index 2039c17a9..f1cb78c8c 100644
+--- a/drivers/gpu/drm/i915/display/intel_display_types.h
++++ b/drivers/gpu/drm/i915/display/intel_display_types.h
+@@ -393,6 +393,7 @@ struct intel_panel {
+ 		bool combination_mode;	/* gen 2/4 only */
+ 		bool active_low_pwm;
+ 		bool alternate_pwm_increment;	/* lpt+ */
++		u32 fw_pwm_level_max;	/* lpt, WT20 fine steps: firmware period, 0 = not used */
+ 
+ 		/* PWM chip */
+ 		u32 pwm_level_min;
+diff --git a/drivers/usb/core/quirks.c b/drivers/usb/core/quirks.c
+index 7442ac03f..18d1acb27 100644
+--- a/drivers/usb/core/quirks.c
++++ b/drivers/usb/core/quirks.c
+@@ -192,6 +192,9 @@ MODULE_PARM_DESC(quirks, "Add/modify USB quirks by specifying quirks=vendorID:pr
+  * 	3) Class ID
+  */
+ static const struct usb_device_id usb_quirk_list[] = {
++	/* Atmel maXTouch USB touchscreen of the Toshiba Portege WT20-B: silent after s2idle */
++	{ USB_DEVICE(0x03eb, 0x8a55), .driver_info = USB_QUIRK_RESET_RESUME },
++
+ 	/* CBM - Flash disk */
+ 	{ USB_DEVICE(0x0204, 0x6025), .driver_info = USB_QUIRK_RESET_RESUME },
+ 
+diff --git a/include/acpi/button.h b/include/acpi/button.h
+index af2fce5d2..0896bb47e 100644
+--- a/include/acpi/button.h
++++ b/include/acpi/button.h
+@@ -2,10 +2,18 @@
+ #ifndef ACPI_BUTTON_H
+ #define ACPI_BUTTON_H
+ 
++#include <linux/types.h>
++
+ #define ACPI_BUTTON_HID_POWER	"PNP0C0C"
+ #define ACPI_BUTTON_HID_LID	"PNP0C0D"
+ #define ACPI_BUTTON_HID_SLEEP	"PNP0C0E"
+ 
++#ifdef CONFIG_ACPI_SLEEP
++bool acpi_power_button_wakeup_pending(void);
++#else
++static inline bool acpi_power_button_wakeup_pending(void) { return false; }
++#endif
++
+ #if IS_ENABLED(CONFIG_ACPI_BUTTON)
+ extern int acpi_lid_open(void);
+ #else

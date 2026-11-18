@@ -1,0 +1,3 @@
+# init.wt20.rc selects s2idle in /sys/power/mem_sleep at early-boot (deep S3 loses the speaker
+# amplifier and the Bluetooth adapter on the Toshiba Portege WT20-B)
+allow init sysfs_mem_sleep:file { open write getattr };

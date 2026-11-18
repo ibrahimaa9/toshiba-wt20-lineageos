@@ -1,0 +1,2 @@
+# minigbm's backend choice, same as the graphics HALs and SurfaceFlinger get
+get_prop(cameraserver, vendor_minigbm_prop)

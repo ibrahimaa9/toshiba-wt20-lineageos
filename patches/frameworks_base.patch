@@ -1,0 +1,31 @@
+diff --git a/services/core/java/com/android/server/WiredAccessoryManager.java b/services/core/java/com/android/server/WiredAccessoryManager.java
+index 6a808b813..c94653f8d 100644
+--- a/services/core/java/com/android/server/WiredAccessoryManager.java
++++ b/services/core/java/com/android/server/WiredAccessoryManager.java
+@@ -100,6 +100,9 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
+     private final AudioManager mAudioManager;
+ 
+     private int mHeadsetState;
++    // Last value of every jack switch. ALSA (HD Audio on PCs) reports the headphone and the
++    // microphone switch on separate input devices, so each event carries only its own switch.
++    private int mJackSwitchValues;
+     private int mDpCount;
+     private String mDetectedIntf = INTF_DP;
+ 
+@@ -225,6 +228,16 @@ final class WiredAccessoryManager implements WiredAccessoryCallbacks {
+         }
+ 
+         synchronized (mLock) {
++            // Complete a headphone or microphone switch event with the other switch's last
++            // value, so that a microphone event arriving before the headphone one does not
++            // turn a headset into headphones. Unchanged when one input device reports both.
++            mJackSwitchValues = (mJackSwitchValues & ~switchMask) | (switchValues & switchMask);
++            if ((switchMask & SW_HEADSET_INSERT_BITS) != 0) {
++                switchValues = (switchValues & ~SW_HEADSET_INSERT_BITS)
++                        | (mJackSwitchValues & SW_HEADSET_INSERT_BITS);
++                switchMask |= SW_HEADSET_INSERT_BITS;
++            }
++
+             // Extracting the logic for unit test
+             int newHeadsetState = calculateHeadsetState(mHeadsetState, switchValues, switchMask);
+ 

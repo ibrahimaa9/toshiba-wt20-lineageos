@@ -1,0 +1,4 @@
+# apply17c: persist.vendor.wt20.hwdec (kill switch: 0 = the HAL lists no components) and
+# persist.vendor.wt20.hwdec.swfallback (0 = a stream the GPU cannot take fails instead of
+# decoding in software inside the HAL)
+vendor_internal_prop(vendor_wt20_hwdec_prop)

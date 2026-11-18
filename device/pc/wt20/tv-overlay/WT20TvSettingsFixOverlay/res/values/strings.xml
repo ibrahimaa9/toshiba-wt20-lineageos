@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <!-- TvSettingsGoogleResOverlay: content://com.google.android.libraries.tv.widgets.updatablesettings.sliceprovider/development_prefs
+         (no enable_adb_root there: DevelopmentFragment throws). Empty = TvSettings' own prefs. -->
+    <string name="development_fragment_slice_uri" translatable="false"></string>
+</resources>

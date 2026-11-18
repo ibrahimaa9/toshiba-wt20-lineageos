@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WT20 charging control (apply15l, only with WT20_CHARGING_CONTROL): "limit" mode at 80%
+     by default. The tablet mostly sits on the charger; the Toshiba EC holds the battery at
+     ~80% once the HAL selects its 80% mode. config_chargingControlEnabled is only what
+     Lineage's reset restores: the switch itself starts off and must be turned on once in
+     Settings > Battery > Charging control, where mode and limit can be changed too. -->
+<resources>
+    <bool name="config_chargingControlEnabled">true</bool>
+    <integer name="config_defaultChargingControlMode">3</integer>
+    <integer name="config_defaultChargingControlLimit">80</integer>
+</resources>

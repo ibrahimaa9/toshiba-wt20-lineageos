@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     WT20: the external camera HAL exposes the rear and front cameras as IDs 100 and 102 with
+     BACK / FRONT facing; Aperture only keeps internal cameras "0" and "1" unless aux cameras
+     are enabled.
+-->
+<resources>
+    <bool name="config_enableAuxCameras">true</bool>
+</resources>

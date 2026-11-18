@@ -1,0 +1,18 @@
+diff --git a/light/Utils.cpp b/light/Utils.cpp
+index c814332..8faa10b 100644
+--- a/light/Utils.cpp
++++ b/light/Utils.cpp
+@@ -43,7 +43,12 @@ State fromAidl(const HwLightState& value) {
+ }
+ 
+ uint32_t scaleBrightness(uint8_t brightness, uint32_t maxBrightness) {
+-    return brightness * maxBrightness / 0xFF;
++    // Round to the nearest level, and keep a non-zero request from becoming 0 (= off) on
++    // backlights with few levels (Toshiba WT20: max_brightness 18, so 0-255 only has 19 steps
++    // and plain truncation switched the panel off below ~7% of the slider)
++    uint32_t scaled = (brightness * maxBrightness + 0x7F) / 0xFF;
++    if (brightness > 0 && scaled == 0) scaled = 1;
++    return scaled;
+ }
+ 
+ }  // namespace light

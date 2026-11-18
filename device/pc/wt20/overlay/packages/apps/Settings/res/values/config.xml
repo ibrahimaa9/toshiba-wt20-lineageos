@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WT20: show Settings > Apps > Cloned apps (AOSP page, off by default) -->
+<resources>
+    <bool name="config_cloned_apps_page_enabled">true</bool>
+
+    <!-- Settings > Battery > Battery information: the health HAL now reports capacity and
+         state of health for the WT20's energy-based ACPI battery (apply15) -->
+    <bool name="config_show_battery_info">true</bool>
+</resources>

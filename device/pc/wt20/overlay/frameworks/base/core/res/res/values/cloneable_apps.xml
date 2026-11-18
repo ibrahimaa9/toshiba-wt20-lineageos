@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WT20: apps allowed a second instance in the clone profile (Settings > Apps > Cloned apps) -->
+<resources>
+    <string-array translatable="false" name="cloneable_apps">
+        <item>com.whatsapp</item> <!-- WhatsApp -->
+        <item>com.whatsapp.w4b</item> <!-- WhatsApp Business -->
+        <item>org.telegram.messenger</item> <!-- Telegram -->
+        <item>org.telegram.messenger.web</item> <!-- Telegram (web build) -->
+        <item>com.instagram.android</item> <!-- Instagram -->
+        <item>com.instagram.barcelona</item> <!-- Threads -->
+        <item>com.facebook.katana</item> <!-- Facebook -->
+        <item>com.facebook.orca</item> <!-- Messenger -->
+        <item>com.facebook.lite</item> <!-- Facebook Lite -->
+        <item>com.snapchat.android</item> <!-- Snapchat -->
+        <item>com.zhiliaoapp.musically</item> <!-- TikTok -->
+        <item>com.ss.android.ugc.trill</item> <!-- TikTok (other regions) -->
+        <item>com.viber.voip</item> <!-- Viber -->
+        <item>com.imo.android.imoim</item> <!-- imo -->
+        <item>org.thoughtcrime.securesms</item> <!-- Signal -->
+        <item>com.twitter.android</item> <!-- X -->
+        <item>com.discord</item> <!-- Discord -->
+        <item>com.linkedin.android</item> <!-- LinkedIn -->
+    </string-array>
+</resources>

@@ -1,0 +1,5 @@
+# apply17c: hardware video decode switches, read by the FFmpeg VA-API Codec2 HAL
+persist.vendor.wt20.hwdec	u:object_r:vendor_wt20_hwdec_prop:s0 exact bool
+persist.vendor.wt20.hwdec.swfallback	u:object_r:vendor_wt20_hwdec_prop:s0 exact bool
+# apply21a: VA-API driver the HAL loads (i965 or iHD)
+persist.vendor.wt20.vadriver	u:object_r:vendor_wt20_hwdec_prop:s0 exact enum i965 iHD

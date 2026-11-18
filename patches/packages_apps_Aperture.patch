@@ -1,0 +1,37 @@
+diff --git a/app/src/main/java/org/lineageos/aperture/CameraActivity.kt b/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
+index 9d51ad1..b737f32 100644
+--- a/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
++++ b/app/src/main/java/org/lineageos/aperture/CameraActivity.kt
+@@ -1547,10 +1547,12 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
+                     cameraConfiguration.videoQuality
+                 ] ?: error("Video quality not supported by the camera")
+ 
++                // A camera whose AE ranges are all variable (UVC webcams: [15,30]) has no
++                // selectable frame rate at all; null then means "leave it to the camera"
+                 require(
+-                    videoQualityInfo.supportedFrameRates.contains(
+-                        cameraConfiguration.videoFrameRate
+-                    )
++                    cameraConfiguration.videoFrameRate?.let {
++                        videoQualityInfo.supportedFrameRates.contains(it)
++                    } ?: videoQualityInfo.supportedFrameRates.isEmpty()
+                 ) {
+                     "Video frame rate not supported with the requested video quality"
+                 }
+diff --git a/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt b/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
+index 2fc11c2..cd680f1 100644
+--- a/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
++++ b/app/src/main/java/org/lineageos/aperture/viewmodels/CameraViewModel.kt
+@@ -1847,9 +1847,9 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
+         }
+ 
+         return try {
+-            val currentCameraConfiguration = _cameraConfiguration.value ?: error(
+-                "Camera configuration is null"
+-            )
++            // A preference can change before initializeCameraConfiguration() has run; the
++            // initial configuration reads the same preferences, so there is nothing to update
++            val currentCameraConfiguration = _cameraConfiguration.value ?: return false
+ 
+             T::class.safeCast(currentCameraConfiguration)?.let {
+                 val newCameraConfiguration = block(it)

@@ -1,0 +1,174 @@
+diff --git a/bootmgr/grub/grub-boot.cfg b/bootmgr/grub/grub-boot.cfg
+index 7c0fa39..bda5256 100644
+--- a/bootmgr/grub/grub-boot.cfg
++++ b/bootmgr/grub/grub-boot.cfg
+@@ -30,18 +30,21 @@ insmod regexp
+ set esp_disk=
+ regexp --set=1:esp_disk '^(hd[0-9]+),' "$root"
+ 
+-# PERSIST is partition 4 (A/B) or 9 of the disk Android is installed on. Only those partitions
+-# are checked: searching every device for the label hangs GRUB on some PC firmwares (tablets
+-# with 32-bit UEFI).
++# PERSIST is partition 4 (A/B) or 9 of the disk Android is installed on, or 24 when Android
++# was installed next to another system (dual boot: the A/B numbers + 20, see
++# pc_create_partition_table.sh). Only those partitions are checked: searching every device for
++# the label hangs GRUB on some PC firmwares (tablets with 32-bit UEFI).
+ insmod probe
+ set partition_persist=
++set persist_gpt=
+ for persist_disk in ${esp_disk} hd0 hd1 hd2 hd3 hd4 hd5 hd6 hd7; do
+-	for persist_part in gpt4 gpt9; do
++	for persist_part in gpt4 gpt9 gpt24; do
+ 		if [ -z "$partition_persist" ]; then
+ 			set persist_label=
+ 			if probe --set=persist_label --label (${persist_disk},${persist_part}); then
+ 				if [ "$persist_label" = "PERSIST" ]; then
+ 					set partition_persist="(${persist_disk},${persist_part})"
++					set persist_gpt="${persist_part}"
+ 				fi
+ 			fi
+ 		fi
+@@ -59,11 +62,20 @@ fi
+ export disk_boot
+ 
+ if [ "$ab_enable" = "true" ]; then
+-	set partition_boot_a="(${disk_boot},gpt9)"
+-	set partition_boot_b="(${disk_boot},gpt10)"
+-	set partition_misc="(${disk_boot},gpt3)"
+-	set partition_vendor_boot_a="(${disk_boot},gpt7)"
+-	set partition_vendor_boot_b="(${disk_boot},gpt8)"
++	if [ "$persist_gpt" = "gpt24" ]; then
++		# Dual boot: the A/B partition numbers + 20
++		set partition_boot_a="(${disk_boot},gpt29)"
++		set partition_boot_b="(${disk_boot},gpt30)"
++		set partition_misc="(${disk_boot},gpt23)"
++		set partition_vendor_boot_a="(${disk_boot},gpt27)"
++		set partition_vendor_boot_b="(${disk_boot},gpt28)"
++	else
++		set partition_boot_a="(${disk_boot},gpt9)"
++		set partition_boot_b="(${disk_boot},gpt10)"
++		set partition_misc="(${disk_boot},gpt3)"
++		set partition_vendor_boot_a="(${disk_boot},gpt7)"
++		set partition_vendor_boot_b="(${disk_boot},gpt8)"
++	fi
+ 	export partition_boot_a
+ 	export partition_boot_b
+ 	export partition_vendor_boot_a
+diff --git a/bootmgr/grub/grub-install.cfg b/bootmgr/grub/grub-install.cfg
+index 7f0e469..d31fb09 100644
+--- a/bootmgr/grub/grub-install.cfg
++++ b/bootmgr/grub/grub-install.cfg
+@@ -24,7 +24,7 @@ initrd_no_align_up
+ insmod probe
+ set partition_persist=
+ for persist_disk in hd0 hd1 hd2 hd3 hd4 hd5 hd6 hd7; do
+-	for persist_part in gpt4 gpt9; do
++	for persist_part in gpt4 gpt9 gpt24; do
+ 		if [ -z "$partition_persist" ]; then
+ 			set persist_label=
+ 			if probe --set=persist_label --label (${persist_disk},${persist_part}); then
+diff --git a/configs/fstab/fstab.virt-common b/configs/fstab/fstab.virt-common
+index c7038f4..311f7da 100644
+--- a/configs/fstab/fstab.virt-common
++++ b/configs/fstab/fstab.virt-common
+@@ -17,4 +17,4 @@
+ /devices/*/usb* auto auto defaults voldmanaged=usb:auto
+ 
+ # ZRAM
+-/dev/block/zram0 none swap defaults zramsize=50%
++/dev/block/zram0 none swap defaults zramsize=75%
+diff --git a/configs/init/init.virt.rc b/configs/init/init.virt.rc
+index 69d8b52..f18d997 100644
+--- a/configs/init/init.virt.rc
++++ b/configs/init/init.virt.rc
+@@ -20,7 +20,7 @@ on property:persist.sys.theme=*
+ 
+ # Display
+ on early-init
+-    setprop ro.sf.lcd_density ${ro.boot.lcd_density:-160}
++    setprop ro.sf.lcd_density ${ro.boot.lcd_density:-240}
+ 
+ # Firmware
+ on early-init
+diff --git a/configs/properties/vendor.prop b/configs/properties/vendor.prop
+index 6c81050..7f39bce 100644
+--- a/configs/properties/vendor.prop
++++ b/configs/properties/vendor.prop
+@@ -5,7 +5,7 @@ persist.bluetooth.a2dp_aac.vbr_supported=true
+ vendor.recovery.dhcpclient.iface?=eth0
+ 
+ # Display
+-ro.surface_flinger.enable_frame_rate_override=false
++ro.surface_flinger.enable_frame_rate_override?=false
+ 
+ # Input
+ qemu.hw.mainkeys=0
+diff --git a/libraries/libinit/libinit_virt.cpp b/libraries/libinit/libinit_virt.cpp
+index 9feb0a9..ba233f9 100644
+--- a/libraries/libinit/libinit_virt.cpp
++++ b/libraries/libinit/libinit_virt.cpp
+@@ -25,8 +25,10 @@ static void set_misc_properties() {
+     sysinfo(&sys);
+ 
+     if (sys.totalram >= GB(2)) {
++        // A device may still opt out at build time (weak GPU) with an explicit 0
+         if (GetProperty("ro.boot.graphics", "mesa") == "mesa" &&
+-            GetProperty("ro.boot.low_perf", "") != "1") {
++            GetProperty("ro.boot.low_perf", "") != "1" &&
++            GetProperty("ro.surface_flinger.supports_background_blur", "") != "0") {
+             property_override("ro.surface_flinger.supports_background_blur", "1");
+         }
+     }
+diff --git a/virt-common.mk b/virt-common.mk
+index 93e9662..ba590f3 100644
+--- a/virt-common.mk
++++ b/virt-common.mk
+@@ -20,7 +20,7 @@ TARGET_HOSTAPD_AND_WPA_SUPPLICANT_FORM := apex-mainline_common
+ TARGET_KEYMINT_HAL_DEFAULT_INSIDE_APEX := false # To save existing users from doing factory reset
+ TARGET_LIGHT_HAL ?= none
+ TARGET_MESA_ENABLE_SOFTWARE_RENDERER := true
+-TARGET_SENSORS_HAL := cuttlefish
++TARGET_SENSORS_HAL ?= cuttlefish
+ TARGET_SUPPORTS_SUSPEND ?= false
+ TARGET_SUPPORTS_USB_ACCESSORY_MODE := false
+ TARGET_USES_TABLET_INPUT_AS_TOUCHSCREEN := true
+@@ -170,9 +170,14 @@ DEVICE_PACKAGE_OVERLAYS += \
+ endif
+ 
+ PRODUCT_PACKAGES += \
+-    AodDefaultOnOverlay \
+     LowPerformanceSettingsProviderOverlay
+ 
++# Devices with a backlit LCD whose SoC should sleep with the screen off set this to false
++TARGET_VIRT_AOD_DEFAULT_ON ?= true
++ifeq ($(TARGET_VIRT_AOD_DEFAULT_ON),true)
++PRODUCT_PACKAGES += AodDefaultOnOverlay
++endif
++
+ # Page size
+ PRODUCT_CHECK_PREBUILT_MAX_PAGE_SIZE := true
+ 
+@@ -202,12 +207,21 @@ PRODUCT_COPY_FILES += \
+ endif
+ 
+ PRODUCT_PACKAGES += \
+-    android.hardware.vulkan.level-1.prebuilt.xml \
+     android.hardware.vulkan.compute-0.prebuilt.xml \
+-    android.hardware.vulkan.version-1_3.prebuilt.xml \
+     android.software.vulkan.deqp.level-latest.prebuilt.xml \
+     android.software.opengles.deqp.level-latest.prebuilt.xml
+ 
++# The declared Vulkan version must match the driver: Broadwell's hasvk reports 1.1
++ifeq ($(TARGET_VULKAN_FEATURE_1_1),true)
++PRODUCT_PACKAGES += android.hardware.vulkan.level-0.prebuilt.xml
++PRODUCT_COPY_FILES += \
++    frameworks/native/data/etc/android.hardware.vulkan.version-1_1.xml:$(TARGET_COPY_OUT_VENDOR)/etc/permissions/android.hardware.vulkan.version-1_1.xml
++else
++PRODUCT_PACKAGES += \
++    android.hardware.vulkan.level-1.prebuilt.xml \
++    android.hardware.vulkan.version-1_3.prebuilt.xml
++endif
++
+ # Recovery
+ PRODUCT_COPY_FILES += \
+     $(VIRT_COMMON_PATH)/configs/init/init.recovery.virt.rc:$(TARGET_COPY_OUT_RECOVERY)/root/init.recovery.virt.rc \

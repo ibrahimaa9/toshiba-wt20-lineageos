@@ -1,0 +1,4 @@
+# build outputs and local files
+*.img
+*.zip
+out/

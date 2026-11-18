@@ -1,0 +1,2 @@
+# apply15v: high touch sensitivity HAL: kill switch (.disable) and touch threshold (.tchthr)
+persist.vendor.wt20.glove.	u:object_r:vendor_wt20_glove_prop:s0

@@ -1,0 +1,5 @@
+# Wakeup-source statistics under /sys/class/power_supply/*/wakeup* (ADP1, BAT1) carry the
+# battery label, which a core neverallow keeps from the suspend service; it only loses those
+# two sources in its statistics, so just silence the denials
+dontaudit system_suspend sysfs_batteryinfo:dir search;
+dontaudit system_suspend sysfs_batteryinfo:file r_file_perms;

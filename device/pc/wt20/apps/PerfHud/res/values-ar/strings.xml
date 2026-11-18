@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    SPDX-FileCopyrightText: The LineageOS Project
+    SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">عدّاد الأداء</string>
+    <string name="intro">لوحة صغيرة تبقى فوق كل شي، حتى فوق الألعاب: الإطارات، المعالج، كارت الشاشة، الحرارة، الذاكرة والبطارية. اسحبها للمكان اللي يعجبك، وبعدين ثبّتها حتى اللمس يروح للعبة.</string>
+    <string name="show_hud">إظهار العدّاد</string>
+    <string name="start_failed">أندرويد ما سمح للعدّاد يشتغل (السجل: WT20Hud).</string>
+
+    <string name="window_secure">ظاهر فوق كل شي، حتى فوق شريط الحالة.</string>
+    <string name="window_system">ظاهر فوق كل شي، وتكدر تسحبه هسه.</string>
+    <string name="window_overlay">ظاهر كنافذة عادية فوق التطبيقات (شريط الحالة ممكن يغطّيه).</string>
+    <string name="window_none">ما كدر يظهر العدّاد (السجل: WT20Hud).</string>
+
+    <string name="section_metrics">شنو يظهر</string>
+    <string name="metric_fps">FPS: الإطارات اللي تنعرض بالثانية</string>
+    <string name="metric_cpu">CPU: حِمل المعالج الكلي</string>
+    <string name="metric_cpu_cores">CPU: حِمل كل نواة</string>
+    <string name="metric_cpu_freq">FRQ: سرعة كل نواة (GHz)</string>
+    <string name="metric_cpu_temp">TMP: حرارة المعالج</string>
+    <string name="metric_board_temp">TMP: حرارة اللوحة (BRD؛ بهذا التابلت ثابتة على 16 درجة)</string>
+    <string name="metric_gpu_freq">GPU: سرعة كارت الشاشة (MHz)</string>
+    <string name="metric_gpu_load">GPU: حِمل كارت الشاشة</string>
+    <string name="metric_ram">RAM: الذاكرة المستخدمة</string>
+    <string name="metric_swap">RAM: الذاكرة الإضافية المستخدمة (SWP)</string>
+    <string name="metric_battery">BAT: نسبة البطارية والشحن</string>
+    <string name="metric_battery_power">BAT: القدرة بالواط (+ شحن، - تفريغ)</string>
+    <string name="metric_clock">CLK: الساعة</string>
+    <string name="fps_note">عدّاد الإطارات يحسب اللي ينعرض فعلاً عالشاشة: إذا الشاشة واكفة يطلع رقم واطي، وهذا طبيعي.</string>
+
+    <string name="section_position">المكان</string>
+    <string name="lock">تثبيت المكان</string>
+    <string name="lock_note">لما يكون مثبّت، اللمس يعبر من خلاله للعبة. طفّي التثبيت حتى تسحب العدّاد لأي مكان، وبعدين رجّعه.</string>
+    <string name="reset_position">إرجاع المكان الأصلي</string>
+
+    <string name="section_size">حجم الخط</string>
+    <string name="size_small">صغير</string>
+    <string name="size_medium">متوسط</string>
+    <string name="size_large">كبير</string>
+    <string name="section_opacity">عتمة الخلفية</string>
+    <string name="percent">%1$d٪</string>
+    <string name="section_interval">التحديث كل</string>
+    <string name="interval_half">نص ثانية</string>
+    <string name="interval_one">ثانية</string>
+    <string name="interval_two">ثانيتين</string>
+
+    <string name="channel_name">عدّاد الأداء</string>
+    <string name="notification_title">العدّاد شغّال</string>
+    <string name="notification_text">اضغط حتى تفتح إعداداته</string>
+    <string name="hide">إخفاء</string>
+    <string name="tile_on">ظاهر</string>
+    <string name="tile_off">مخفي</string>
+</resources>

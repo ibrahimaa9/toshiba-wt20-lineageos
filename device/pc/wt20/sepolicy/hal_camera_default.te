@@ -1,0 +1,10 @@
+# External camera provider (webcams): it allocates its buffers through the graphics
+# allocator/mapper (minigbm), which this tree's policy does not make it a client of; without
+# this the service aborts with "gralloc-mapper is missing" as soon as an app opens a camera.
+# (A plain allow on the service trips the neverallow in hal_graphics_allocator.te; the client
+# attribute is the sanctioned way.)
+hal_client_domain(hal_camera_default, hal_graphics_allocator)
+
+# minigbm's backend choice (pc_gpu_detect: gbm_mesa on Intel); without it the HAL's minigbm
+# falls back to the i915 backend and its NV12 buffers cannot be mapped by anyone else
+get_prop(hal_camera_default, vendor_minigbm_prop)

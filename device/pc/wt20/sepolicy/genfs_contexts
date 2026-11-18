@@ -1,0 +1,7 @@
+# Toshiba Portege WT20-B: the ST sensor hub (USB HID 0483:91D1) is wired to port 5 of the
+# xHCI root hub. Its HID sensor IIO devices and their triggers live under it; the IIO sensors
+# HAL (hal_sensors_default, device/mainline/common sepolicy) reads and writes them.
+genfscon sysfs /devices/pci0000:00/0000:00:14.0/usb1/1-5 u:object_r:vendor_sysfs_iio:s0
+# /sys/bus/iio/devices: the symlinks the HAL enumerates the devices through
+genfscon sysfs /bus/iio u:object_r:vendor_sysfs_iio:s0
+genfscon sysfs /devices/LNXSYSTM:00/LNXSYBUS:00/TOS6208:00/iio:device0 u:object_r:vendor_sysfs_iio:s0

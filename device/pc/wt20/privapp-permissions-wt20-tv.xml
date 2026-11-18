@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  WT20 Android TV product (apply22c): privileged permissions the Google TV apps taken from the
+  Android 16 Google TV emulator image request but whose allowlist entries that image does not
+  carry in the files we copied (tools/privapp-check.py). With
+  ro.control_privapp_permissions=enforce, a missing entry makes system_server crash at boot.
+-->
+<permissions>
+    <privapp-permissions package="com.google.android.gms">
+        <permission name="android.permission.GET_ROLE_HOLDERS"/>
+        <permission name="android.permission.OBSERVE_ROLE_HOLDERS"/>
+    </privapp-permissions>
+    <privapp-permissions package="com.android.vending">
+        <permission name="android.permission.HIDE_STATUS_BAR_NOTIFICATION"/>
+    </privapp-permissions>
+</permissions>

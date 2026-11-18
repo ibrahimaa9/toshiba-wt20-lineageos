@@ -1,0 +1,11 @@
+//
+// Toshiba Portege WT20-B: the powerhint.json module that TARGET_POWER_HAL := perfmgr-lineage
+// requires (device/mainline/common/optional/power-hal_perfmgr-lineage/product.mk installs it
+// as /vendor/etc/powerhint.json). Hints and nodes: apply15m.py.
+//
+
+prebuilt_etc {
+    name: "powerhint.json",
+    src: "powerhint.json",
+    vendor: true,
+}

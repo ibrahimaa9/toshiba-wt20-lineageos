@@ -1,0 +1,13 @@
+diff --git a/src/com/android/settings/bluetooth/SavedBluetoothDeviceUpdater.java b/src/com/android/settings/bluetooth/SavedBluetoothDeviceUpdater.java
+index aeff2ec..60a1dcf 100644
+--- a/src/com/android/settings/bluetooth/SavedBluetoothDeviceUpdater.java
++++ b/src/com/android/settings/bluetooth/SavedBluetoothDeviceUpdater.java
+@@ -57,7 +57,7 @@ public class SavedBluetoothDeviceUpdater extends BluetoothDeviceUpdater
+ 
+     @Override
+     public void forceUpdate() {
+-        if (mBluetoothAdapter.isEnabled()) {
++        if (mBluetoothAdapter != null && mBluetoothAdapter.isEnabled()) {
+             final CachedBluetoothDeviceManager cachedManager =
+                     mLocalManager.getCachedDeviceManager();
+             final List<BluetoothDevice> bluetoothDevices =

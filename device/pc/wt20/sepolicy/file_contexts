@@ -1,0 +1,5 @@
+# sensors.iio's saved magnetometer calibration (created by init.wt20.rc)
+/data/vendor/sensors(/.*)?    u:object_r:sensors_vendor_data_file:s0
+
+# apply15v: high touch sensitivity HAL (built with WT20_TOUCH_HAL := true)
+/(vendor|system/vendor)/bin/hw/vendor\.lineage\.touch-service\.wt20	u:object_r:hal_lineage_touch_default_exec:s0

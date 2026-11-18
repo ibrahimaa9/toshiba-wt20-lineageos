@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WT20_MIRACAST (device/pc/wt20/options.mk, apply15p): Miracast source. Wi-Fi Direct runs on
+     the supplicant's P2P device (wifi.direct.interface=p2p-dev-wlan0), the remote submix
+     module carries the audio, the software AVC encoder the video. No HDCP keys: sinks that
+     insist on HDCP fall back to unprotected streaming (protected content is not cast). -->
+<resources>
+    <bool name="config_enableWifiDisplay">true</bool>
+</resources>

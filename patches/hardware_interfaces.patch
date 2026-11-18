@@ -1,0 +1,412 @@
+diff --git a/audio/aidl/default/Android.bp b/audio/aidl/default/Android.bp
+index 48c1fef..b486a89 100644
+--- a/audio/aidl/default/Android.bp
++++ b/audio/aidl/default/Android.bp
+@@ -121,7 +121,11 @@ cc_library {
+         "-Werror",
+         "-Wthread-safety",
+         "-DBACKEND_NDK",
+-    ],
++    ] + select(soong_config_variable("wt20_audio", "hdmi_output"), {
++        // device/pc/wt20 (WT20_HDMI_AUDIO): HDMI / DisplayPort output on the primary module
++        true: ["-DWT20_HDMI_AUDIO"],
++        default: [],
++    }),
+ }
+ 
+ cc_library {
+diff --git a/audio/aidl/default/Configuration.cpp b/audio/aidl/default/Configuration.cpp
+index 0ff8eb4..6164fe0 100644
+--- a/audio/aidl/default/Configuration.cpp
++++ b/audio/aidl/default/Configuration.cpp
+@@ -196,10 +196,14 @@ std::vector<AudioProfile> getStandard16And24BitPcmAudioProfiles() {
+ //
+ std::unique_ptr<Configuration> getPrimaryConfiguration() {
+     static const Configuration configuration = []() {
++        // The primary module is backed by an HD-Audio card through ALSA and passes stream
++        // configs to it unchanged: HDA converters are stereo and run at 44.1/48 kHz (and up),
++        // so advertise only that and let AudioFlinger convert for apps asking for mono or a
++        // low rate. Mono / 8-32 kHz here made capture fail to open (no microphone, empty
++        // video recordings) on PCs such as the Toshiba WT20-B (Conexant CX20753).
+         const std::vector<AudioProfile> standardPcmAudioProfiles = {
+-                createProfile(PcmType::INT_16_BIT,
+-                              {AudioChannelLayout::LAYOUT_MONO, AudioChannelLayout::LAYOUT_STEREO},
+-                              {8000, 11025, 16000, 32000, 44100, 48000})};
++                createProfile(PcmType::INT_16_BIT, {AudioChannelLayout::LAYOUT_STEREO},
++                              {44100, 48000})};
+         Configuration c;
+ 
+         // Device ports
+@@ -257,10 +261,9 @@ std::unique_ptr<Configuration> getPrimaryConfiguration() {
+ 
+         AudioPort primaryInMix =
+                 createPort(c.nextPortId++, "primary input", 0, true, createPortMixExt(0, 1));
+-        primaryInMix.profiles.push_back(
+-                createProfile(PcmType::INT_16_BIT,
+-                              {AudioChannelLayout::LAYOUT_MONO, AudioChannelLayout::LAYOUT_STEREO},
+-                              {8000, 11025, 16000, 32000, 44100, 48000}));
++        primaryInMix.profiles.insert(primaryInMix.profiles.begin(),
++                                     standardPcmAudioProfiles.begin(),
++                                     standardPcmAudioProfiles.end());
+         c.ports.push_back(primaryInMix);
+ 
+         AudioPort telephonyTxOutMix =
+diff --git a/audio/aidl/default/ModulePrimary.cpp b/audio/aidl/default/ModulePrimary.cpp
+index 6648068..5c2c6cf 100644
+--- a/audio/aidl/default/ModulePrimary.cpp
++++ b/audio/aidl/default/ModulePrimary.cpp
+@@ -31,6 +31,7 @@ using aidl::android::hardware::audio::common::hasMmapFlag;
+ using aidl::android::hardware::audio::common::SinkMetadata;
+ using aidl::android::hardware::audio::common::SourceMetadata;
+ using aidl::android::hardware::audio::core::StreamDescriptor;
++using aidl::android::media::audio::common::AudioDeviceDescription;
+ using aidl::android::media::audio::common::AudioInputFlags;
+ using aidl::android::media::audio::common::AudioIoFlags;
+ using aidl::android::media::audio::common::AudioOffloadInfo;
+@@ -120,6 +121,31 @@ ndk::ScopedAStatus ModulePrimary::createMmapBuffer(const AudioPortConfig& portCo
+     return ndk::ScopedAStatus::ok();
+ }
+ 
++ndk::ScopedAStatus ModulePrimary::populateConnectedDevicePort(AudioPort* audioPort,
++                                                              int32_t nextPortId) {
++    // Analog jack devices (wired headset / headphones and the headset microphone) play and
++    // record through the same ALSA PCM as the speaker / built-in mic (see StreamPrimary): HD
++    // Audio codecs mute the speaker and switch to the jack microphone themselves. There is
++    // nothing to probe: the port keeps its dynamic profiles and the routable mix ports' static
++    // profiles are used, as for the speaker. The base class refuses all external devices.
++    if (audioPort->ext.getTag() == AudioPortExt::device &&
++        audioPort->ext.get<AudioPortExt::device>().device.type.connection ==
++                AudioDeviceDescription::CONNECTION_ANALOG) {
++        return ndk::ScopedAStatus::ok();
++    }
++#ifdef WT20_HDMI_AUDIO
++    // HDMI / DisplayPort (HD Audio HDMI codec): the "hdmi output" mix port's static profile is
++    // used, and StreamPrimary finds the ALSA PCM of the plugged port. Without WT20_HDMI_AUDIO
++    // the connection is refused as before, so the policy keeps sound on the speaker / jack.
++    if (audioPort->ext.getTag() == AudioPortExt::device &&
++        audioPort->ext.get<AudioPortExt::device>().device.type.connection ==
++                AudioDeviceDescription::CONNECTION_HDMI) {
++        return ndk::ScopedAStatus::ok();
++    }
++#endif
++    return Module::populateConnectedDevicePort(audioPort, nextPortId);
++}
++
+ int32_t ModulePrimary::getNominalLatencyMs(const AudioPortConfig& portConfig) {
+     static constexpr int32_t kLowLatencyMs = 10;
+     // 85 ms is chosen considering 4096 frames @ 48 kHz. This is the value which allows
+diff --git a/audio/aidl/default/alsa/StreamAlsa.cpp b/audio/aidl/default/alsa/StreamAlsa.cpp
+index 7a44cc7..2832826 100644
+--- a/audio/aidl/default/alsa/StreamAlsa.cpp
++++ b/audio/aidl/default/alsa/StreamAlsa.cpp
+@@ -14,9 +14,12 @@
+  * limitations under the License.
+  */
+ 
++#include <chrono>
+ #include <cmath>
+ #include <limits>
+ 
++#include <unistd.h>
++
+ #define LOG_TAG "AHAL_StreamAlsa"
+ #include <android-base/logging.h>
+ 
+@@ -53,7 +56,10 @@ StreamAlsa::~StreamAlsa() {
+ 
+ ::android::sp<::android::MonoPipe> StreamAlsa::makeSink(bool writeCanBlock) {
+     const ::android::NBAIO_Format format = getPipeFormat();
+-    auto sink = ::android::sp<::android::MonoPipe>::make(mBufferSizeFrames, format, writeCanBlock);
++    // Input: room for a few periods, so a read that comes a little late does not stall the
++    // I/O thread (and ALSA behind it) on a full pipe
++    const size_t pipeFrames = mIsInput ? 4 * mBufferSizeFrames : mBufferSizeFrames;
++    auto sink = ::android::sp<::android::MonoPipe>::make(pipeFrames, format, writeCanBlock);
+     const ::android::NBAIO_Format offers[1] = {format};
+     size_t numCounterOffers = 0;
+     ssize_t index = sink->negotiate(offers, 1, nullptr, numCounterOffers);
+@@ -165,8 +171,25 @@ StreamAlsa::~StreamAlsa() {
+     if (mIsInput) {
+         const size_t i = 0;  // For the input case, only support a single device.
+         LOG(VERBOSE) << __func__ << ": reading from sink " << i;
+-        ssize_t framesRead = mSources[i]->read(buffer, frameCount);
+-        LOG_IF(FATAL, framesRead < 0) << "Error reading from the pipe: " << framesRead;
++        // The I/O thread delivers ALSA periods at the device's pace: wait for them (up to two
++        // buffer durations) instead of padding with silence at once, which put ~85 ms of
++        // silence into recordings every ~0.7 s whenever a read came slightly early.
++        const unsigned rate = mConfig.has_value() && mConfig->rate ? mConfig->rate : 48000;
++        const auto deadline = std::chrono::steady_clock::now() +
++                              std::chrono::microseconds(2 * frameCount * 1000000ULL / rate);
++        ssize_t framesRead = 0;
++        while (static_cast<size_t>(framesRead) < frameCount) {
++            ssize_t framesOrError =
++                    mSources[i]->read(static_cast<char*>(buffer) + framesRead * mFrameSizeBytes,
++                                      frameCount - framesRead);
++            LOG_IF(FATAL, framesOrError < 0) << "Error reading from the pipe: " << framesOrError;
++            framesRead += framesOrError;
++            if (static_cast<size_t>(framesRead) == frameCount || !mIoThreadIsRunning ||
++                std::chrono::steady_clock::now() >= deadline) {
++                break;
++            }
++            usleep(1000);  // MonoPipeReader has no blocking read, as in outputIoThread
++        }
+         if (ssize_t framesMissing = static_cast<ssize_t>(frameCount) - framesRead;
+             framesMissing > 0) {
+             LOG(WARNING) << __func__ << ": incomplete data received, inserting " << framesMissing
+diff --git a/audio/aidl/default/include/core-impl/ModulePrimary.h b/audio/aidl/default/include/core-impl/ModulePrimary.h
+index c93deed..a24ffe3 100644
+--- a/audio/aidl/default/include/core-impl/ModulePrimary.h
++++ b/audio/aidl/default/include/core-impl/ModulePrimary.h
+@@ -47,6 +47,9 @@ class ModulePrimary final : public Module {
+             int32_t bufferSizeFrames, int32_t frameSizeBytes, MmapBufferDescriptor* desc) override;
+     int32_t getNominalLatencyMs(
+             const ::aidl::android::media::audio::common::AudioPortConfig& portConfig) override;
++    ndk::ScopedAStatus populateConnectedDevicePort(
++            ::aidl::android::media::audio::common::AudioPort* audioPort,
++            int32_t nextPortId) override;
+ 
+   private:
+     ChildInterface<ITelephony> mTelephony;
+diff --git a/audio/aidl/default/include/core-impl/StreamPrimary.h b/audio/aidl/default/include/core-impl/StreamPrimary.h
+index 627f757..fe8f571 100644
+--- a/audio/aidl/default/include/core-impl/StreamPrimary.h
++++ b/audio/aidl/default/include/core-impl/StreamPrimary.h
+@@ -75,6 +75,8 @@ class StreamPrimary : public StreamAlsa {
+     AlsaDeviceId mAlsaDeviceId GUARDED_BY(mLock) = kStubDeviceId;
+     // mAlsaDeviceId came from PrimaryMixer::getAlsaCardAndDevice, which start() reads again
+     bool mUsesDefaultDevice GUARDED_BY(mLock) = false;
++    // An HDMI output: mAlsaDeviceId is the HDMI card's plugged PCM, which start() finds again
++    bool mUsesHdmiDevice GUARDED_BY(mLock) = false;
+ 
+     // Used by the worker thread only.
+     AlsaDeviceId mCurrAlsaDeviceId = kStubDeviceId;
+diff --git a/audio/aidl/default/primary/StreamPrimary.cpp b/audio/aidl/default/primary/StreamPrimary.cpp
+index b49a20a..68a49fd 100644
+--- a/audio/aidl/default/primary/StreamPrimary.cpp
++++ b/audio/aidl/default/primary/StreamPrimary.cpp
+@@ -16,14 +16,23 @@
+ 
+ #define LOG_TAG "AHAL_StreamPrimary"
+ 
++#include <algorithm>
+ #include <cstdio>
++#include <cstring>
++#include <optional>
++#include <string>
++#include <utility>
++
++#include <unistd.h>
+ 
+ #include <android-base/logging.h>
+ #include <android-base/parseint.h>
+ #include <android-base/properties.h>
++#include <android-base/stringprintf.h>
+ #include <audio_utils/clock.h>
+ #include <error/Result.h>
+ #include <error/expected_utils.h>
++#include <tinyalsa/mixer.h>
+ 
+ #include "core-impl/StreamPrimary.h"
+ 
+@@ -36,9 +45,76 @@ using aidl::android::media::audio::common::AudioDeviceType;
+ using aidl::android::media::audio::common::AudioOffloadInfo;
+ using aidl::android::media::audio::common::MicrophoneInfo;
+ using android::base::GetBoolProperty;
++using android::base::StringPrintf;
+ 
+ namespace aidl::android::hardware::audio::core {
+ 
++namespace {
++
++// Whether the device's address names an ALSA card / device ("CARD_<n>_DEV_<m>", see
++// StreamPrimary::getCardAndDeviceId)
++bool namesAlsaDevice(const AudioDevice& device) {
++    return device.address.getTag() == AudioDeviceAddress::id &&
++           device.address.get<AudioDeviceAddress::id>().find("CARD_") != std::string::npos;
++}
++
++// An HDMI / DisplayPort output that names no ALSA device (the framework connects HDMI with an
++// empty address): it plays on the HD Audio HDMI card (findHdmiAlsaDevice)
++bool isHdmiOutput(bool isInput, const AudioDevice& device) {
++    return !isInput && device.type.connection == AudioDeviceDescription::CONNECTION_HDMI &&
++           !namesAlsaDevice(device);
++}
++
++// Whether the device uses the default ALSA card / device: its address names none, and it is
++// not HDMI (another card)
++bool usesDefaultAlsaDevice(const AudioDevice& device) {
++    return !namesAlsaDevice(device) &&
++           device.type.connection != AudioDeviceDescription::CONNECTION_HDMI;
++}
++
++constexpr int kMaxAlsaCards = 8;
++
++// The HDMI / DisplayPort PCM to play on. snd-hda-codec-hdmi names one jack control per PCM,
++// "HDMI/DP,pcm=<device> Jack", which reads 1 while a monitor that takes audio (valid ELD) is
++// connected to the port behind that PCM (PCMs follow the ports dynamically on Intel display
++// audio). Returns the card and device of the first plugged jack, else the HDMI card's first
++// PCM, or nothing when no card has HDMI jacks.
++std::optional<std::pair<int, int>> findHdmiAlsaDevice() {
++    std::optional<std::pair<int, int>> firstPcm;
++    for (int card = 0; card < kMaxAlsaCards; ++card) {
++        if (access(StringPrintf("/dev/snd/controlC%d", card).c_str(), F_OK) != 0) continue;
++        struct mixer* mixer = mixer_open(card);
++        if (mixer == nullptr) continue;
++        std::optional<std::pair<int, int>> plugged;
++        const unsigned int ctlCount = mixer_get_num_ctls(mixer);
++        for (unsigned int i = 0; i < ctlCount && !plugged.has_value(); ++i) {
++            const struct mixer_ctl* ctl = mixer_get_ctl(mixer, i);
++            const char* name = ctl != nullptr ? mixer_ctl_get_name(ctl) : nullptr;
++            int device = -1;
++            char suffix[8] = {};
++            if (name == nullptr || sscanf(name, "HDMI/DP,pcm=%d %7s", &device, suffix) != 2 ||
++                strcmp(suffix, "Jack") != 0 ||
++                access(StringPrintf("/dev/snd/pcmC%dD%dp", card, device).c_str(), F_OK) != 0) {
++                continue;
++            }
++            if (!firstPcm.has_value()) firstPcm = std::make_pair(card, device);
++            if (mixer_ctl_get_value(ctl, 0) > 0) plugged = std::make_pair(card, device);
++        }
++        mixer_close(mixer);
++        if (plugged.has_value()) {
++            LOG(DEBUG) << __func__ << ": HDMI card " << plugged->first << " device "
++                       << plugged->second << " is plugged";
++            return plugged;
++        }
++    }
++    if (!firstPcm.has_value()) {
++        LOG(WARNING) << __func__ << ": no HDMI / DisplayPort PCM found";
++    }
++    return firstPcm;
++}
++
++}  // namespace
++
+ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
+     : StreamAlsa(context, metadata, 3 /*readWriteRetries*/),
+       mIsAsynchronous(!!getContext().getAsyncCallback()),
+@@ -76,6 +152,9 @@ StreamPrimary::StreamPrimary(StreamContext* context, const Metadata& metadata)
+         if (mUsesDefaultDevice) {
+             // The output / input chosen in the settings may have changed since
+             mAlsaDeviceId = primary::PrimaryMixer::getAlsaCardAndDevice(mIsInput);
++        } else if (mUsesHdmiDevice) {
++            // The monitor may have moved to another port (PCM) since
++            mAlsaDeviceId = findHdmiAlsaDevice().value_or(kStubDeviceId);
+         }
+         isStub = mAlsaDeviceId == kStubDeviceId;
+         shutdownAlsaStream =
+@@ -146,7 +225,14 @@ void StreamPrimary::shutdown() {
+ 
+ ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& devices) {
+     LOG(DEBUG) << __func__ << ": " << ::android::internal::ToString(devices);
+-    if (devices.size() > 1) {
++    // Several devices are fine when they all use the default ALSA device: the policy plays
++    // ringtones, alarms and notifications on the speaker and a wired headset / headphones
++    // together, which on HD Audio are one PCM (the codec mutes the speaker while the jack is
++    // in). Refusing them failed those patches and left the stream without a device.
++    if (devices.size() > 1 &&
++        !std::all_of(devices.begin(), devices.end(), [this](const AudioDevice& d) {
++            return !useStubStream(mIsInput, d) && usesDefaultAlsaDevice(d);
++        })) {
+         LOG(ERROR) << __func__ << ": primary stream can only be connected to one device, got: "
+                    << devices.size();
+         return ndk::ScopedAStatus::fromExceptionCode(EX_UNSUPPORTED_OPERATION);
+@@ -155,6 +241,7 @@ ndk::ScopedAStatus StreamPrimary::setConnectedDevices(const ConnectedDevices& de
+         const bool useStubDriver = devices.empty() || useStubStream(mIsInput, devices[0]);
+         std::lock_guard l(mLock);
+         mUsesDefaultDevice = false;
++        mUsesHdmiDevice = false;
+         mAlsaDeviceId = useStubDriver ? kStubDeviceId : getCardAndDeviceId(devices);
+     }
+     if (!devices.empty()) {
+@@ -180,6 +267,11 @@ bool StreamPrimary::isStubStream() {
+ 
+ StreamPrimary::AlsaDeviceId StreamPrimary::getCardAndDeviceId(
+         const std::vector<AudioDevice>& devices) {
++    if (!devices.empty() && isHdmiOutput(mIsInput, devices[0])) {
++        // HDMI: the HDMI card's plugged PCM; the stub driver (silence) if there is none
++        mUsesHdmiDevice = true;
++        return findHdmiAlsaDevice().value_or(kStubDeviceId);
++    }
+     if (devices.empty() || devices[0].address.getTag() != AudioDeviceAddress::id) {
+         mUsesDefaultDevice = true;
+         return primary::PrimaryMixer::getAlsaCardAndDevice(mIsInput);
+diff --git a/camera/device/default/ExternalCameraDevice.cpp b/camera/device/default/ExternalCameraDevice.cpp
+index 8e84748..49e4b05 100644
+--- a/camera/device/default/ExternalCameraDevice.cpp
++++ b/camera/device/default/ExternalCameraDevice.cpp
+@@ -420,7 +420,22 @@ status_t ExternalCameraDevice::initDefaultCharsKeys(
+     const uint8_t opticalStabilizationMode = ANDROID_LENS_OPTICAL_STABILIZATION_MODE_OFF;
+     UPDATE(ANDROID_LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION, &opticalStabilizationMode, 1);
+ 
+-    const uint8_t facing = ANDROID_LENS_FACING_EXTERNAL;
++    uint8_t facing = ANDROID_LENS_FACING_EXTERNAL;
++    if (!mCfg.lensFacing.empty()) {
++        unique_fd capFd(::open(mDevicePath.c_str(), O_RDWR));
++        v4l2_capability cap{};
++        if (capFd.get() >= 0 && TEMP_FAILURE_RETRY(ioctl(capFd.get(), VIDIOC_QUERYCAP, &cap)) == 0) {
++            const std::string card(reinterpret_cast<const char*>(cap.card),
++                                   strnlen(reinterpret_cast<const char*>(cap.card), sizeof(cap.card)));
++            for (const auto& [prefix, lens] : mCfg.lensFacing) {
++                if (card.rfind(prefix, 0) == 0) {
++                    facing = lens;
++                    break;
++                }
++            }
++            ALOGI("%s: %s ('%s') facing %d", __FUNCTION__, mDevicePath.c_str(), card.c_str(), facing);
++        }
++    }
+     UPDATE(ANDROID_LENS_FACING, &facing, 1);
+ 
+     // android.noiseReduction
+@@ -795,6 +810,7 @@ status_t ExternalCameraDevice::calculateMinFps(
+         fpsRanges.push_back(framerate);
+     }
+     minFps /= 2;
++    if (minFps < 1) minFps = 1;  // a mode under 2 fps would divide by zero below
+     int64_t maxFrameDuration = 1000000000LL / minFps;
+ 
+     UPDATE(ANDROID_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES, fpsRanges.data(), fpsRanges.size());
+diff --git a/camera/device/default/ExternalCameraUtils.cpp b/camera/device/default/ExternalCameraUtils.cpp
+index 2dc3c77..8790e6b 100644
+--- a/camera/device/default/ExternalCameraUtils.cpp
++++ b/camera/device/default/ExternalCameraUtils.cpp
+@@ -168,6 +168,24 @@ ExternalCameraConfig ExternalCameraConfig::loadFromCfg(const char* cfgPath) {
+         ret.orientation = orientation->IntAttribute("degree", /*Default*/ kDefaultOrientation);
+     }
+ 
++    for (XMLElement* row = deviceCfg->FirstChildElement("Facing"); row != nullptr;
++         row = row->NextSiblingElement("Facing")) {
++        const char* card = row->Attribute("card");
++        const char* lens = row->Attribute("lens");
++        if (card == nullptr || lens == nullptr) continue;
++        uint8_t facing;
++        if (strcmp(lens, "front") == 0) {
++            facing = ANDROID_LENS_FACING_FRONT;
++        } else if (strcmp(lens, "back") == 0) {
++            facing = ANDROID_LENS_FACING_BACK;
++        } else {
++            ALOGE("%s: unknown lens facing '%s' for '%s'", __FUNCTION__, lens, card);
++            continue;
++        }
++        ret.lensFacing.emplace_back(card, facing);
++        ALOGI("%s: cameras named '%s*' face %s", __FUNCTION__, card, lens);
++    }
++
+     ALOGI("%s: external camera cfg loaded: maxJpgBufSize %d,"
+           " num video buffers %d, num still buffers %d, orientation %d",
+           __FUNCTION__, ret.maxJpegBufSize, ret.numVideoBuffers, ret.numStillBuffers,
+diff --git a/camera/device/default/ExternalCameraUtils.h b/camera/device/default/ExternalCameraUtils.h
+index d434905..a740fb2 100644
+--- a/camera/device/default/ExternalCameraUtils.h
++++ b/camera/device/default/ExternalCameraUtils.h
+@@ -107,6 +107,10 @@ struct ExternalCameraConfig {
+     // The value of android.sensor.orientation
+     int32_t orientation;
+ 
++    // android.lens.facing for cameras whose V4L2 card name starts with the given prefix
++    // (<Facing card="..." lens="front|back"/>); other cameras report EXTERNAL
++    std::vector<std::pair<std::string, uint8_t>> lensFacing;
++
+   private:
+     ExternalCameraConfig();
+     static bool updateFpsList(tinyxml2::XMLElement* fpsList, std::vector<FpsLimitation>& fpsLimits);

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<resources>
+    <!-- GoogleTvConfigOverlayX: com.google.android.ext.services (Google's ExtServices build).
+         This build has AOSP's; PackageManagerService throws at boot when it is missing. -->
+    <string name="config_servicesExtensionPackage" translatable="false">android.ext.services</string>
+    <!-- GoogleTvConfigOverlayX: com.google.android.permissioncontroller -->
+    <string name="config_incidentReportApproverPackage" translatable="false">com.android.permissioncontroller</string>
+    <!-- GoogleTvConfigOverlayX: com.google.android.devicelockcontroller (not in this build) -->
+    <string name="config_systemFinancedDeviceController" translatable="false"></string>
+</resources>

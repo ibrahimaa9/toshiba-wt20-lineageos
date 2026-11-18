@@ -1,0 +1,9 @@
+<!-- WT20 hardware video decode (apply17c): the FFmpeg VA-API Codec2 HAL. Instance "default":
+     the 202504 matrix allows only default[0-9]* or vendor[0-9]*_software. -->
+<manifest version="1.0" type="device">
+    <hal format="aidl">
+        <name>android.hardware.media.c2</name>
+        <version>1</version>
+        <fqname>IComponentStore/default</fqname>
+    </hal>
+</manifest>

@@ -1,0 +1,91 @@
+diff --git a/shared/config/audio/policy/primary_audio_policy_configuration.xml b/shared/config/audio/policy/primary_audio_policy_configuration.xml
+index 9208a3b..0f11a33 100644
+--- a/shared/config/audio/policy/primary_audio_policy_configuration.xml
++++ b/shared/config/audio/policy/primary_audio_policy_configuration.xml
+@@ -25,10 +25,12 @@
+     </attachedDevices>
+     <defaultOutputDevice>Speaker</defaultOutputDevice>
+     <mixPorts>
++        <!-- pc_x86_64 installs this file too: its primary module is an HD Audio card through
++             ALSA, which takes stereo at 44.1/48 kHz; AudioFlinger converts for apps -->
+         <mixPort name="primary output" role="source" flags="AUDIO_OUTPUT_FLAG_PRIMARY">
+             <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+-                     samplingRates="8000 11025 16000 32000 44100 48000"
+-                     channelMasks="AUDIO_CHANNEL_OUT_MONO AUDIO_CHANNEL_OUT_STEREO"/>
++                     samplingRates="44100 48000"
++                     channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
+         </mixPort>
+         <mixPort name="compressed_offload" role="source"
+                  flags="AUDIO_OUTPUT_FLAG_DIRECT AUDIO_OUTPUT_FLAG_COMPRESS_OFFLOAD AUDIO_OUTPUT_FLAG_NON_BLOCKING">
+@@ -43,13 +45,13 @@
+         </mixPort>
+         <mixPort name="primary input" role="sink">
+             <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+-                     samplingRates="8000 11025 16000 32000 44100 48000"
+-                     channelMasks="AUDIO_CHANNEL_IN_MONO AUDIO_CHANNEL_IN_STEREO"/>
++                     samplingRates="44100 48000"
++                     channelMasks="AUDIO_CHANNEL_IN_STEREO"/>
+         </mixPort>
+         <mixPort name="mmap_no_irq_in" role="sink" flags="AUDIO_INPUT_FLAG_MMAP_NOIRQ">
+             <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+                              samplingRates="44100 48000"
+-                             channelMasks="AUDIO_CHANNEL_IN_MONO AUDIO_CHANNEL_IN_STEREO"/>
++                             channelMasks="AUDIO_CHANNEL_IN_STEREO"/>
+         </mixPort>
+         <mixPort name="telephony_tx" role="source">
+             <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
+@@ -67,6 +69,15 @@
+                      samplingRates="8000 11025 16000 32000 44100 48000"
+                      channelMasks="AUDIO_CHANNEL_IN_MONO AUDIO_CHANNEL_IN_STEREO"/>
+         </mixPort>
++        <!-- pc_x86_64: HDMI / DisplayPort output (HD Audio HDMI codec, Intel display audio).
++             Its own output: the HDMI PCM is on another ALSA card than the speaker, so sounds
++             played on both (ringtones, alarms) are duplicated over the two outputs. Stereo
++             16-bit 48 kHz is the basic audio every HDMI sink with audio takes. -->
++        <mixPort name="hdmi output" role="source">
++            <profile name="" format="AUDIO_FORMAT_PCM_16_BIT"
++                     samplingRates="48000"
++                     channelMasks="AUDIO_CHANNEL_OUT_STEREO"/>
++        </mixPort>
+    </mixPorts>
+    <devicePorts>
+         <devicePort tagName="Speaker" type="AUDIO_DEVICE_OUT_SPEAKER" role="sink">
+@@ -81,14 +92,36 @@
+ 
+         <devicePort tagName="FM Tuner" type="AUDIO_DEVICE_IN_FM_TUNER" role="source">
+         </devicePort>
++
++        <!-- pc_x86_64: the HD Audio headphone / headset jack. Not attached: Android connects
++             them when the kernel's jack switches report a plug (WiredAccessoryManager). They
++             use the same ALSA PCM as the speaker / built-in mic; the codec switches itself. -->
++        <devicePort tagName="Wired Headset" type="AUDIO_DEVICE_OUT_WIRED_HEADSET" role="sink">
++        </devicePort>
++        <devicePort tagName="Wired Headphones" type="AUDIO_DEVICE_OUT_WIRED_HEADPHONE" role="sink">
++        </devicePort>
++        <devicePort tagName="Wired Headset Mic" type="AUDIO_DEVICE_IN_WIRED_HEADSET" role="source">
++        </devicePort>
++
++        <!-- pc_x86_64: HDMI / DisplayPort sink. Not attached: WiredAccessoryManager connects it
++             when the HDMI codec's jack (SW_LINEOUT_INSERT + SW_VIDEOOUT_INSERT) reports a
++             monitor that takes audio. The HAL plays it on the HDMI card's plugged PCM. -->
++        <devicePort tagName="HDMI Out" type="AUDIO_DEVICE_OUT_HDMI" role="sink">
++        </devicePort>
+     </devicePorts>
+     <routes>
+         <route type="mix" sink="Speaker"
+                sources="primary output,compressed_offload,mmap_no_irq_out"/>
++        <route type="mix" sink="Wired Headset"
++               sources="primary output,compressed_offload,mmap_no_irq_out"/>
++        <route type="mix" sink="Wired Headphones"
++               sources="primary output,compressed_offload,mmap_no_irq_out"/>
++        <route type="mix" sink="HDMI Out"
++               sources="hdmi output"/>
+         <route type="mix" sink="primary input"
+-               sources="Built-In Mic"/>
++               sources="Built-In Mic,Wired Headset Mic"/>
+         <route type="mix" sink="mmap_no_irq_in"
+-               sources="Built-In Mic"/>
++               sources="Built-In Mic,Wired Headset Mic"/>
+ 
+         <route type="mix" sink="telephony_rx"
+                sources="Telephony Rx"/>

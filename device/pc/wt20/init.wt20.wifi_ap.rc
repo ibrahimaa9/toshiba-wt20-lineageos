@@ -1,0 +1,13 @@
+# WT20_WIFI_STA_AP (apply15p): the hotspot's interface wlan1. The vendor Wi-Fi HAL (generic
+# nl80211 legacy HAL) uses wlan0 / wlan1 when they exist and cannot create them, so wlan1 is
+# added on the iwlwifi phy before system_server starts Wi-Fi. It stays down until hostapd
+# makes it the access point. Userdebug only (su domain, like wt20_remote).
+service wt20_wifi_ap_iface /system/bin/sh /system/bin/wt20_wifi_ap.sh
+    user root
+    group root
+    seclabel u:r:su:s0
+    oneshot
+    disabled
+
+on post-fs-data
+    start wt20_wifi_ap_iface

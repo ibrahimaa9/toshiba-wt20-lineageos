@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<!-- The only privileged permission WT20PerfHud requests: the overlay service is started from
+     the Quick Settings tile and at boot. INTERNAL_SYSTEM_WINDOW, HARDWARE_TEST,
+     SYSTEM_ALERT_WINDOW, SYSTEM_APPLICATION_OVERLAY and MANAGE_APP_OPS_MODES are signature
+     permissions (platform certificate); the FOREGROUND_SERVICE ones and RECEIVE_BOOT_COMPLETED
+     are normal, POST_NOTIFICATIONS is a runtime permission. -->
+<permissions>
+    <privapp-permissions package="org.lineageos.wt20.hud">
+        <permission name="android.permission.START_FOREGROUND_SERVICES_FROM_BACKGROUND"/>
+        <!-- signature|privileged, also granted by the platform certificate -->
+        <permission name="android.permission.ACCESS_FPS_COUNTER"/>
+        <permission name="android.permission.REAL_GET_TASKS"/>
+    </privapp-permissions>
+</permissions>

@@ -1,0 +1,6 @@
+# WT20 charging control (apply15l): the Lineage health HAL toggles the Toshiba EC's charge mode
+# through /sys/class/power_supply/BAT1/charge_control_end_threshold. The BAT1 symlink is
+# labeled by genfscon (/class/power_supply), its target under /sys/devices/.../power_supply/BAT1
+# by file_contexts (pc_x86_64): both sysfs_batteryinfo.
+r_dir_file(hal_lineage_health_default, sysfs_batteryinfo)
+allow hal_lineage_health_default sysfs_batteryinfo:file rw_file_perms;

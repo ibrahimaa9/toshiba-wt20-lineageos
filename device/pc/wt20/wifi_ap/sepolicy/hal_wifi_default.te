@@ -1,0 +1,5 @@
+# WT20_WIFI_STA_AP (apply15p): the generic nl80211 legacy HAL linked into the vendor Wi-Fi HAL
+# (device/generic/goldfish/wifi/wifi_hal) reads link statistics over a route netlink socket;
+# the same rule cuttlefish has for it. Only compiled with the switch on (pc_x86_64/BoardConfig.mk).
+allow hal_wifi_default hal_wifi_default:netlink_route_socket {
+    create bind write read nlmsg_read nlmsg_readpriv };

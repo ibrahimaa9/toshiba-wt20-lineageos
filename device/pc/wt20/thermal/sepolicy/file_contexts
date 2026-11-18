@@ -1,0 +1,2 @@
+# WT20 thermal HAL (apply15n)
+/(vendor|system/vendor)/bin/hw/android\.hardware\.thermal-service\.wt20    u:object_r:hal_thermal_default_exec:s0

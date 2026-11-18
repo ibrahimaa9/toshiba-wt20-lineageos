@@ -1,0 +1,30 @@
+# WT20 HUD (apply18a; device/pc/wt20/options.mk WT20_PERF_HUD), system_ext private policy.
+# org.lineageos.wt20.hud is platform-signed and privileged and has no sharedUserId, so
+# seapp_contexts (user=_app seinfo=platform) runs it as platform_app, like WT20GameMode.
+# Running it as system_app (android.uid.system) would need the same rules and share the system
+# uid with Settings and the framework. These rules only let platform_app READ the counters the
+# overlay shows; no writes, no new types or labels, no new app domain. The rest is already open
+# to apps: SurfaceFlinger's binder (FPS), the battery broadcast and BatteryManager,
+# ActivityManager.getMemoryInfo and WindowManager.
+
+# CPU load (/proc/stat deltas), RAM and swap (/proc/meminfo)
+allow platform_app proc_stat:file r_file_perms;
+allow platform_app proc_meminfo:file r_file_perms;
+
+# Core clocks: /sys/devices/system/cpu/cpuN/cpufreq/scaling_cur_freq (a link into
+# cpufreq/policyN) and the core count (/sys/devices/system/cpu/present)
+r_dir_file(platform_app, sysfs_devices_system_cpu)
+
+# CPU package and board temperatures: /sys/class/thermal/thermal_zoneN/{type,temp}. The links
+# are AOSP's sysfs_thermal, the zones under /sys/devices/virtual/thermal are sysfs_thermal
+# through apply15n's genfscon (WT20_THERMAL_HAL)
+r_dir_file(platform_app, sysfs_thermal)
+
+# i915: gt_act_freq_mhz and power/rc6_residency_ms of
+# /sys/devices/pci0000:00/0000:00:02.0/drm/cardN, all sysfs_gpu (pc_x86_64 genfs_contexts
+# labels the whole iGPU directory)
+r_dir_file(platform_app, sysfs_gpu)
+
+# Battery power: no rule. system/sepolicy/private/domain.te neverallows platform_app reading
+# sysfs_batteryinfo (/sys/class/power_supply), so the HUD takes the power from BatteryManager
+# (CURRENT_NOW x voltage) instead of power_now

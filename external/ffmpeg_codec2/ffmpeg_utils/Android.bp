@@ -1,0 +1,38 @@
+// Copyright (C) 2017 The Android-x86 Open Source Project
+// Copyright (C) 2025 KonstaKANG
+//
+// SPDX-License-Identifier: Apache-2.0
+
+// WT20: a static library of the service now (it was a shared library next to the APEX), built
+// only against the FFmpeg libraries that external/ffmpeg provides (no libavformat, no
+// libswresample).
+cc_library_static {
+    name: "libffmpeg_utils",
+    vendor: true,
+    export_include_dirs: [
+        ".",
+    ],
+    srcs: [
+        "ffmpeg_utils.cpp",
+    ],
+    header_libs: [
+        "libffmpeg_headers",
+    ],
+    export_header_lib_headers: [
+        "libffmpeg_headers",
+    ],
+    shared_libs: [
+        "libavcodec",
+        "libavutil",
+        "libcutils",
+        "liblog",
+        "libswscale",
+        "libutils",
+    ],
+    enabled: false,
+    arch: {
+        x86_64: {
+            enabled: true,
+        },
+    },
+}

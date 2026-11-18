@@ -1,0 +1,3 @@
+# apply17c: the FFmpeg VA-API Codec2 HAL runs as mediacodec (system/sepolicy vendor/mediacodec.te:
+# hal_codec2_server, gpu_device, dmabuf system heap, graphics allocator client)
+/(vendor|system/vendor)/bin/hw/android\.hardware\.media\.c2-service-ffmpeg	u:object_r:mediacodec_exec:s0

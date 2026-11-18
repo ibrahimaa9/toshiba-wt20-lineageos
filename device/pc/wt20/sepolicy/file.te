@@ -1,0 +1,2 @@
+# /data/vendor/sensors: sensors.iio's saved magnetometer calibration
+type sensors_vendor_data_file, file_type, data_file_type;

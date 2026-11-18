@@ -1,0 +1,9 @@
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// WT20 Android TV product (apply22d): undoes GoogleTvConfigOverlayX where it names Google
+// packages this build does not have (see res/values/config.xml)
+runtime_resource_overlay {
+    name: "WT20TvFrameworkFixOverlay",
+    product_specific: true,
+}

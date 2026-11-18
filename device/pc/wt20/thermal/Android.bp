@@ -1,0 +1,27 @@
+//
+// Toshiba Portege WT20-B thermal HAL (apply15n; options.mk WT20_THERMAL_HAL): the CPU package
+// temperature (x86_pkg_temp) as CPU and SKIN sensors, IThermal v3.
+//
+
+cc_binary {
+    name: "android.hardware.thermal-service.wt20",
+    relative_install_path: "hw",
+    vendor: true,
+    init_rc: ["android.hardware.thermal-service.wt20.rc"],
+    vintf_fragments: ["android.hardware.thermal-service.wt20.xml"],
+    srcs: [
+        "service.cpp",
+        "Thermal.cpp",
+    ],
+    shared_libs: [
+        "android.hardware.thermal-V3-ndk",
+        "libbase",
+        "libbinder_ndk",
+        "liblog",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-Werror",
+    ],
+}

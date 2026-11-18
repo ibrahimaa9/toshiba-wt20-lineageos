@@ -1,0 +1,9 @@
+//
+// SPDX-License-Identifier: Apache-2.0
+//
+// WT20 Android TV product (apply22h): TvSettings' own developer options (with LineageOS
+// "Rooted debugging") instead of Google's slice, which crashes DevelopmentFragment
+runtime_resource_overlay {
+    name: "WT20TvSettingsFixOverlay",
+    product_specific: true,
+}

@@ -1,0 +1,13 @@
+diff --git a/Android.bp b/Android.bp
+index 46a8762..43fdc15 100644
+--- a/Android.bp
++++ b/Android.bp
+@@ -122,6 +122,8 @@ common_cflags = [
+     "-D__STDC_LIMIT_MACROS",
+     "-D__VPHAL_SFC_SUPPORTED=1",
+     "-DiHD_drv_video_EXPORTS",
++    // WT20 (apply21b): gmmlib 22.8.0 headers include files under #pragma pack
++    "-Wno-pragma-pack-suspicious-include",
+ ]
+ 
+ cc_library_shared {

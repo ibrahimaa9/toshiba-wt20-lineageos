@@ -1,0 +1,2 @@
+# The default Bluetooth HAL powers the adapter off/on through /dev/rfkill
+allow hal_bluetooth_default rfkill_device:chr_file rw_file_perms;

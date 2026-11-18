@@ -1,0 +1,4 @@
+service vendor.thermal-hal-wt20 /vendor/bin/hw/android.hardware.thermal-service.wt20
+    class hal
+    user system
+    group system

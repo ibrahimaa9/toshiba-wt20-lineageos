@@ -1,0 +1,50 @@
+diff --git a/service/java/com/android/server/wifi/SoftApManager.java b/service/java/com/android/server/wifi/SoftApManager.java
+index d12e5b3..ae00171 100644
+--- a/service/java/com/android/server/wifi/SoftApManager.java
++++ b/service/java/com/android/server/wifi/SoftApManager.java
+@@ -923,6 +923,9 @@ public class SoftApManager implements ActiveModeManager {
+             Log.e(getTag(), "Failed to update AP band and channel");
+             return startResult;
+         }
++        if (!isBridgedMode() && mWifiNative.isStaApConcurrencySupported()) {
++            followStaChannel(localConfigBuilder);
++        }
+ 
+         if (mCurrentSoftApConfiguration.isHiddenSsid()) {
+             Log.d(getTag(), "SoftAP is a hidden network");
+@@ -2372,6 +2375,35 @@ public class SoftApManager implements ActiveModeManager {
+         }
+     }
+ 
++    /**
++     * pc_x86_64 (Intel 7265, iwlwifi): next to a connected station the driver runs an access
++     * point only on the station's own channel (its two-channel interface combination has no
++     * AP), so a hotspot on another channel fails to start. Use the station's channel when the
++     * hotspot's band allows it. DFS channels are left alone: no AP can start on them here.
++     */
++    private void followStaChannel(SoftApConfiguration.Builder builder) {
++        final int staFreqMhz = getCurrentStaFreqMhz();
++        final int band;
++        if (ScanResult.is24GHz(staFreqMhz)) {
++            band = SoftApConfiguration.BAND_2GHZ;
++        } else if ((staFreqMhz >= 5170 && staFreqMhz <= 5250)
++                || (staFreqMhz >= 5735 && staFreqMhz <= 5835)) {
++            band = SoftApConfiguration.BAND_5GHZ;
++        } else {
++            return;
++        }
++        if ((mCurrentSoftApConfiguration.getBand() & band) == 0) {
++            return;
++        }
++        final int channel = ScanResult.convertFrequencyMhzToChannelIfSupported(staFreqMhz);
++        if (channel <= 0) {
++            return;
++        }
++        Log.i(getTag(), "Following the station's channel " + channel + " (" + staFreqMhz
++                + " MHz): this chip runs an AP next to a station on one channel only");
++        builder.setChannel(channel, band);
++    }
++
+     // Logging code
+ 
+     private int getCurrentStaFreqMhz() {

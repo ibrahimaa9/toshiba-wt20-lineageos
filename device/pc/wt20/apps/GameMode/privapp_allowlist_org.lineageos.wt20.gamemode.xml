@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     SPDX-FileCopyrightText: The LineageOS Project
+     SPDX-License-Identifier: Apache-2.0
+-->
+<!-- The only privileged permission WT20GameMode requests (QUERY_ALL_PACKAGES and
+     RECEIVE_BOOT_COMPLETED are normal permissions) -->
+<permissions>
+    <privapp-permissions package="org.lineageos.wt20.gamemode">
+        <permission name="android.permission.MANAGE_GAME_MODE"/>
+    </privapp-permissions>
+</permissions>

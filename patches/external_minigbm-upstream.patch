@@ -1,0 +1,362 @@
+diff --git a/cros_gralloc/cros_gralloc_buffer.cc b/cros_gralloc/cros_gralloc_buffer.cc
+index c738830..d6152f3 100644
+--- a/cros_gralloc/cros_gralloc_buffer.cc
++++ b/cros_gralloc/cros_gralloc_buffer.cc
+@@ -376,10 +376,11 @@ int32_t cros_gralloc_buffer::lock(const struct rectangle *rect, uint32_t map_fla
+ 			vaddr = drv_bo_map(bo_, &r, map_flags, &lock_data_[0], 0);
+ 		}
+ 
+-		if (vaddr == MAP_FAILED) {
++		if (vaddr == MAP_FAILED || vaddr == nullptr) {
+ 			ALOGE("Mapping failed.");
+ 			return -EFAULT;
+ 		}
++
+ 	}
+ 
+ 	for (uint32_t plane = 0; plane < hnd_->num_planes; plane++)
+diff --git a/drv.c b/drv.c
+index 4d742fd..aae2f5d 100644
+--- a/drv.c
++++ b/drv.c
+@@ -613,13 +613,16 @@ void *drv_bo_map(struct bo *bo, const struct rectangle *rect, uint32_t map_flags
+ 
+ 	memcpy(mapping.vma->map_strides, bo->meta.strides, sizeof(mapping.vma->map_strides));
+ 	addr = drv->backend->bo_map(bo, mapping.vma, map_flags);
+-	if (addr == MAP_FAILED) {
++	if (addr == MAP_FAILED || addr == NULL) {
++		drv_loge("backend bo_map failed (format 0x%08x, %ux%u)\n", bo->meta.format,
++			 bo->meta.width, bo->meta.height);
+ 		*map_data = NULL;
+ 		free(mapping.vma);
+ 		pthread_mutex_unlock(&drv->mappings_lock);
+ 		return MAP_FAILED;
+ 	}
+ 
++
+ 	mapping.vma->refcount = 1;
+ 	mapping.vma->addr = addr;
+ 	mapping.vma->inode = bo->inode;
+diff --git a/gbm_mesa_driver/gbm_mesa_internals.cpp b/gbm_mesa_driver/gbm_mesa_internals.cpp
+index bbdde72..e1363d9 100644
+--- a/gbm_mesa_driver/gbm_mesa_internals.cpp
++++ b/gbm_mesa_driver/gbm_mesa_internals.cpp
+@@ -37,8 +37,10 @@ extern "C" {
+ #include <functional>
+ #include <gbm.h>
+ #include <glob.h>
++#include <inttypes.h>
+ #include <iterator>
+ #include <linux/dma-buf.h>
++
+ #include <log/log.h>
+ #include <stdlib.h>
+ #include <string.h>
+@@ -320,6 +322,30 @@ void gbm_mesa_driver_close(struct driver *drv)
+ 	}
+ }
+ 
++/*
++ * Formats mesa3d cannot allocate/import directly (NV12, NV21, YVU420, YVU420_ANDROID, BGR888,
++ * see get_gbm_format()) and 1D R8 (BLOB) buffers are "spoofed": minigbm computes the plane
++ * strides/offsets itself (drv_bo_from_format) and the whole buffer is backed by ONE linear R8
++ * 2D texture of SPOOFED_BO_WIDTH bytes per row. mesa3d only ever sees that R8 texture; mapping
++ * it at (0, 0) yields a flat view of the buffer to which the minigbm plane offsets are applied.
++ * Allocation (gbm_mesa_bo_create), import (gbm_mesa_bo_import) and map (gbm_mesa_bo_map) MUST
++ * all describe the same geometry, so it is computed in one place.
++ */
++#define SPOOFED_BO_WIDTH 4096
++
++static bool gbm_mesa_use_spoofed_geometry(struct gbm_ops *wr, uint32_t format, uint32_t height)
++{
++	return wr->get_gbm_format(format) == 0 || (format == DRM_FORMAT_R8 && height == 1);
++}
++
++static void gbm_mesa_spoofed_bo_geometry(size_t size, uint32_t *width, uint32_t *height,
++					 uint32_t *stride)
++{
++	*width = SPOOFED_BO_WIDTH;
++	*height = DIV_ROUND_UP(size, SPOOFED_BO_WIDTH);
++	*stride = SPOOFED_BO_WIDTH;
++}
++
+ struct GbmMesaBoPriv {
+ 	~GbmMesaBoPriv()
+ 	{
+@@ -333,8 +359,12 @@ struct GbmMesaBoPriv {
+ 	uint32_t map_stride = 0;
+ 	UniqueFd fds[DRV_MAX_PLANES];
+ 	struct gbm_bo *gbm_bo = nullptr;
++	/* Geometry priv->gbm_bo was imported with; gbm_mesa_bo_map() must map exactly this. */
++	uint32_t gbm_width = 0;
++	uint32_t gbm_height = 0;
+ };
+ 
++
+ int gbm_mesa_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t format,
+ 		       uint64_t use_flags)
+ {
+@@ -389,15 +419,18 @@ int gbm_mesa_bo_create(struct bo *bo, uint32_t width, uint32_t height, uint32_t
+ 
+ 	if (alloc_args.drm_format == DRM_FORMAT_R8 && alloc_args.height == 1) {
+ 		/* Some mesa drivers may not support 1D allocations.
+-		 * Use 2D texture with 4096 width instead.
++		 * Use a 2D texture of SPOOFED_BO_WIDTH width instead. gbm_mesa_bo_import() must
++		 * reconstruct exactly this geometry (see gbm_mesa_spoofed_bo_geometry()).
+ 		 */
++		uint32_t spoofed_stride = 0;
+ 		alloc_args.needs_map_stride = false;
+-		alloc_args.height = DIV_ROUND_UP(alloc_args.width, 4096);
+-		alloc_args.width = 4096;
++		gbm_mesa_spoofed_bo_geometry(alloc_args.width, &alloc_args.width,
++					     &alloc_args.height, &spoofed_stride);
+ 		drv_logv("Allocate 1D buffer as %dx%d R8 2D texture", alloc_args.width,
+ 			 alloc_args.height);
+ 	}
+ 
++
+ 	err = wr->alloc(&alloc_args);
+ 
+ 	if (err && !scanout_strong) {
+@@ -446,20 +479,56 @@ int gbm_mesa_bo_import(struct bo *bo, struct drv_import_fd_data *data)
+ 	if (data->use_flags & BO_USE_SW_MASK) {
+ 		// Mapping require importing by gbm_mesa
+ 		auto drv = gbm_mesa_get_or_init_driver(bo->drv, true);
++		if (drv == nullptr) {
++			drv_loge("%s: failed to init gbm driver", __func__);
++			delete priv;
++			return -EINVAL;
++		}
+ 		auto wr = drv->wrapper;
+ 
+ 		uint32_t s_format = data->format;
+-		int s_height = data->height;
+-		int s_width = data->width;
+-		if (wr->get_gbm_format(s_format) == 0) {
+-			s_width = bo->meta.total_size;
+-			s_height = 1;
++		uint32_t s_width = data->width;
++		uint32_t s_height = data->height;
++		uint32_t s_stride = data->strides[0];
++		if (gbm_mesa_use_spoofed_geometry(wr, data->format, data->height)) {
++			/*
++			 * bo->meta.total_size is NOT known here: drv_bo_import() fills the plane
++			 * sizes only after this callback returns. Derive the backing size from the
++			 * dma-buf itself, exactly like drv_bo_import() does, and describe the
++			 * buffer with the same R8 2D geometry gbm_mesa_bo_create() allocated.
++			 */
++			off_t bo_size = lseek(data->fds[0], 0, SEEK_END);
++			lseek(data->fds[0], 0, SEEK_SET);
++			if (bo_size <= 0) {
++				drv_loge("%s: lseek() failed with %s", __func__, strerror(errno));
++				delete priv;
++				return -EINVAL;
++			}
++			/* floor: never describe more rows than the dma-buf holds (the allocation
++			 * already rounded total_size up to whole rows) */
++			gbm_mesa_spoofed_bo_geometry(((size_t)bo_size / SPOOFED_BO_WIDTH) * SPOOFED_BO_WIDTH,
++						     &s_width, &s_height, &s_stride);
++			if (s_height == 0)
++				s_height = 1;
+ 			s_format = DRM_FORMAT_R8;
+ 		}
+ 
+ 		priv->drv = drv;
+-		priv->gbm_bo = wr->import(drv->gbm_dev, data->fds[0], s_width, s_height,
+-					  data->strides[0], data->format_modifier, s_format);
++		priv->gbm_width = s_width;
++		priv->gbm_height = s_height;
++		priv->gbm_bo = wr->import(drv->gbm_dev, data->fds[0], s_width, s_height, s_stride,
++					  data->format_modifier, s_format);
++		if (priv->gbm_bo == nullptr) {
++			/*
++			 * Do not fail the import: processes that never CPU-map the buffer (e.g.
++			 * SurfaceFlinger importing camera preview buffers that carry SW usage)
++			 * must keep working. gbm_mesa_bo_map() fails cleanly instead.
++			 */
++			drv_loge("%s: gbm import failed: format 0x%08x %ux%u imported as 0x%08x "
++				 "%ux%u stride %u modifier 0x%" PRIx64 ", CPU mapping impossible",
++				 __func__, data->format, data->width, data->height, s_format,
++				 s_width, s_height, s_stride, data->format_modifier);
++		}
+ 	}
+ 
+ 	bo->priv = priv;
+@@ -467,6 +536,7 @@ int gbm_mesa_bo_import(struct bo *bo, struct drv_import_fd_data *data)
+ 	return 0;
+ }
+ 
++
+ int gbm_mesa_bo_destroy(struct bo *bo)
+ {
+ 	if (bo->priv) {
+@@ -483,42 +553,56 @@ int gbm_mesa_bo_get_plane_fd(struct bo *bo, size_t plane)
+ 
+ void *gbm_mesa_bo_map(struct bo *bo, struct vma *vma, uint32_t map_flags)
+ {
+-	auto drv = gbm_mesa_get_or_init_driver(bo->drv, true);
+-	auto wr = drv->wrapper;
+-
+-	vma->length = bo->meta.total_size;
+-
+ 	auto priv = (GbmMesaBoPriv *)bo->priv;
+-	assert(priv->gbm_bo != nullptr);
+ 
++	if (priv == nullptr || priv->drv == nullptr || priv->gbm_bo == nullptr) {
++		/* Allocated without SW usage (never imported into gbm_mesa), gbm import failed
++		 * (already logged by gbm_mesa_bo_import()), or allocator-side bo: nothing to map.
++		 * Never return NULL here: drv_bo_map()/cros_gralloc_buffer::lock() treat only
++		 * MAP_FAILED as failure and would hand out NULL + plane offsets as addresses. */
++		drv_loge("%s: buffer format 0x%08x use_flags 0x%" PRIx64
++			 " has no gbm_mesa bo, cannot map",
++			 __func__, bo->meta.format, bo->meta.use_flags);
++		return MAP_FAILED;
++	}
++
++	auto wr = priv->drv->wrapper;
+ 	void *buf = MAP_FAILED;
+ 
+-	uint32_t s_format = bo->meta.format;
+-	int s_width = bo->meta.width;
+-	int s_height = bo->meta.height;
+-	if (wr->get_gbm_format(s_format) == 0) {
+-		s_width = bo->meta.total_size;
+-		s_height = 1;
++	vma->priv = nullptr;
++	wr->map(priv->gbm_bo, priv->gbm_width, priv->gbm_height, &buf, &vma->priv);
++
++	if (buf == nullptr || buf == MAP_FAILED || vma->priv == nullptr) {
++		drv_loge("%s: gbm map failed: format 0x%08x %ux%u (gbm bo %ux%u)", __func__,
++			 bo->meta.format, bo->meta.width, bo->meta.height, priv->gbm_width,
++			 priv->gbm_height);
++		vma->priv = nullptr;
++		return MAP_FAILED;
+ 	}
+ 
+-	wr->map(priv->gbm_bo, s_width, s_height, &buf, &vma->priv);
++	vma->length = bo->meta.total_size;
+ 
+ 	return buf;
+ }
+ 
+ int gbm_mesa_bo_unmap(struct bo *bo, struct vma *vma)
+ {
+-	auto drv = gbm_mesa_get_or_init_driver(bo->drv, true);
+-	auto wr = drv->wrapper;
+-
+ 	auto priv = (GbmMesaBoPriv *)bo->priv;
+-	assert(priv->gbm_bo != nullptr);
+-	assert(vma->priv != nullptr);
++
++	if (priv == nullptr || priv->drv == nullptr || priv->gbm_bo == nullptr ||
++	    vma->priv == nullptr) {
++		drv_loge("%s: nothing to unmap (gbm_bo %p, map_data %p)", __func__,
++			 priv ? (void *)priv->gbm_bo : nullptr, vma->priv);
++		return -EINVAL;
++	}
++
++	auto wr = priv->drv->wrapper;
+ 	wr->unmap(priv->gbm_bo, vma->priv);
+ 	vma->priv = nullptr;
+ 	return 0;
+ }
+ 
++
+ uint32_t gbm_mesa_bo_get_map_stride(struct bo *bo)
+ {
+ 	auto priv = (GbmMesaBoPriv *)bo->priv;
+diff --git a/gbm_mesa_driver/gbm_mesa_wrapper.c b/gbm_mesa_driver/gbm_mesa_wrapper.c
+index 200a81d..8ed10af 100644
+--- a/gbm_mesa_driver/gbm_mesa_wrapper.c
++++ b/gbm_mesa_driver/gbm_mesa_wrapper.c
+@@ -23,9 +23,12 @@
+ #include <dlfcn.h>
+ #include <drm_fourcc.h>
+ #include <errno.h>
++#include <inttypes.h>
+ #include <log/log.h>
++#include <string.h>
+ #include <sys/mman.h>
+ 
++
+ #define ARRAY_SIZE(A) (sizeof(A) / sizeof(*(A)))
+ #define DRM_TO_GBM_FORMAT(A)                                                                       \
+ 	{                                                                                          \
+@@ -148,12 +151,16 @@ static int gbm_mesa_alloc(struct alloc_args *args)
+ 
+ 		addr = gbm_priv_ops.gbm_bo_map(bo, 0, 0, args->width, args->height, flags,
+ 				  &args->out_map_stride, &map_data);
+-		if (addr == MAP_FAILED) {
+-			ALOGE("Failed to map the buffer at %s:%d", __FILE__, __LINE__);
++		/* mesa3d's gbm_bo_map() returns NULL (not MAP_FAILED) on failure. */
++		if (addr == NULL || addr == MAP_FAILED || map_data == NULL) {
++			ALOGE("Failed to map the buffer at %s:%d (%s)", __FILE__, __LINE__,
++			      strerror(errno));
++			args->out_map_stride = 0;
+ 		} else {
+ 			gbm_priv_ops.gbm_bo_unmap(bo, map_data);
+ 		}
+ 
++
+ 		gbm_priv_ops.gbm_bo_destroy(bo);
+ 	}
+ 
+@@ -176,11 +183,22 @@ static struct gbm_bo *gbm_import(struct gbm_device *gbm, int buf_fd, uint32_t wi
+ 		.modifier = modifier,
+ 	};
+ 
++	if (data.format == 0) {
++		ALOGE("Unable to import BO: drm format 0x%08x has no gbm equivalent", drm_format);
++		return NULL;
++	}
++
+ 	bo = gbm_priv_ops.gbm_bo_import(gbm, GBM_BO_IMPORT_FD_MODIFIER, &data, 0);
++	if (!bo) {
++		ALOGE("Unable to import BO: fd=%d %ux%u stride=%u modifier=0x%" PRIx64
++		      " fmt=0x%08x (%s)",
++		      buf_fd, width, height, stride, modifier, drm_format, strerror(errno));
++	}
+ 
+ 	return bo;
+ }
+ 
++
+ static void gbm_free(struct gbm_bo *bo)
+ {
+ 	gbm_priv_ops.gbm_bo_destroy(bo);
+@@ -189,14 +207,31 @@ static void gbm_free(struct gbm_bo *bo)
+ static void gbm_map(struct gbm_bo *bo, int w, int h, void **addr, void **map_data)
+ {
+ 	int flags = GBM_BO_TRANSFER_READ | GBM_BO_TRANSFER_WRITE;
+-
+ 	uint32_t stride = 0;
+-	*addr = gbm_priv_ops.gbm_bo_map(bo, 0, 0, w, h, flags, &stride, map_data);
+-	if (addr == MAP_FAILED) {
+-		ALOGE("Failed to map the buffer at %s:%d", __FILE__, __LINE__);
++	void *ptr;
++
++	/* Contract with the gralloc side: *addr == MAP_FAILED on ANY failure. */
++	*addr = MAP_FAILED;
++	*map_data = NULL;
++
++	if (!bo) {
++		ALOGE("Failed to map the buffer: no gbm_bo (buffer was never imported)");
++		return;
+ 	}
++
++	/* mesa3d's gbm_bo_map() returns NULL (not MAP_FAILED) on failure. */
++	ptr = gbm_priv_ops.gbm_bo_map(bo, 0, 0, w, h, flags, &stride, map_data);
++	if (ptr == NULL || ptr == MAP_FAILED || *map_data == NULL) {
++		ALOGE("Failed to map the buffer (%dx%d) at %s:%d (%s)", w, h, __FILE__, __LINE__,
++		      strerror(errno));
++		*map_data = NULL;
++		return;
++	}
++
++	*addr = ptr;
+ }
+ 
++
+ static void gbm_unmap(struct gbm_bo *bo, void *map_data)
+ {
+ 	gbm_priv_ops.gbm_bo_unmap(bo, map_data);

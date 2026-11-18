@@ -1,0 +1,12 @@
+//
+// WT20 hardware video decode (apply17c; options.mk WT20_HW_VIDEO_DECODE): the VINTF fragment of
+// the FFmpeg VA-API Codec2 HAL (external/ffmpeg_codec2). Installed as
+// /vendor/etc/vintf/manifest/android.hardware.media.c2-service-ffmpeg.xml (wt20.mk). The .rc
+// and media_codecs_c2.xml are PRODUCT_COPY_FILES; the self-test is in selftest/.
+//
+
+vintf_fragment {
+    name: "android.hardware.media.c2-service-ffmpeg.wt20.xml",
+    src: "android.hardware.media.c2-service-ffmpeg.xml",
+    vendor: true,
+}

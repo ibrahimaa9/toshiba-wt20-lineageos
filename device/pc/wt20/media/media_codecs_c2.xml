@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+  WT20 hardware video decoders (apply17c; device/pc/wt20/options.mk WT20_HW_VIDEO_DECODE):
+  external/ffmpeg_codec2 on FFmpeg's VA-API hwaccel (i965, HD 5300), installed as
+  /vendor/etc/media_codecs_c2.xml, which Codec2InfoBuilder parses after the swcodec APEX's
+  media_codecs.xml. A component the HAL lists is used only if it has an entry here.
+
+  rank: decimal on purpose (Codec2InfoBuilder reads it with sscanf "%u"; "0x80" would be
+  ignored). Lower is preferred; c2.android.* are 512 (0x200), so these come first and the
+  software decoders stay listed as the fallback for anything outside these limits (apps that
+  ask isFormatSupported, like ExoPlayer and Chrome, skip to them).
+  Limits: what the Gen8 decoder was tested at; raise only after testing. H.264 up to level 5.1
+  (the HAL's interface lists ConstrainedBaseline, Baseline, Main, ConstrainedHigh and High;
+  plain Baseline, which FFmpeg's VA-API has no VAProfile for, is decoded with the High config
+  through ALLOW_PROFILE_MISMATCH), 1080p60. MPEG-2 Main@High, 1080p30. No adaptive-playback
+  until the resolution-change test passes. No HEVC, VP9 or AV1 (the HD 5300 has no decoder
+  for them). Selection uses these limits only; the HAL's interface accepts more (up to 4K) so
+  that a stream growing mid-stream continues in software inside the HAL.
+  can-swap-width-height: the size limit holds in either orientation (portrait 1080x1920 is
+  1920x1088 turned, the same 8160 macroblocks), which MediaCodecList's codecHandlesFormat and
+  VideoCapabilities honour only with this feature.
+-->
+<MediaCodecs>
+    <Decoders>
+        <MediaCodec name="c2.ffmpeg.h264.decoder" type="video/avc" rank="128">
+            <Feature name="can-swap-width-height" value="1" />
+            <Limit name="size" min="2x2" max="1920x1088" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-8160" />
+            <Limit name="blocks-per-second" range="1-489600" />
+            <Limit name="bitrate" range="1-62500000" />
+            <Limit name="concurrent-instances" max="4" />
+        </MediaCodec>
+        <MediaCodec name="c2.ffmpeg.vp8.decoder" type="video/x-vnd.on2.vp8" rank="128">
+            <Feature name="can-swap-width-height" value="1" />
+            <Limit name="size" min="2x2" max="1920x1088" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-8160" />
+            <Limit name="blocks-per-second" range="1-489600" />
+            <Limit name="bitrate" range="1-62500000" />
+            <Limit name="concurrent-instances" max="4" />
+        </MediaCodec>
+        <MediaCodec name="c2.ffmpeg.mpeg2.decoder" type="video/mpeg2" rank="128">
+            <Feature name="can-swap-width-height" value="1" />
+            <Limit name="size" min="2x2" max="1920x1088" />
+            <Limit name="alignment" value="2x2" />
+            <Limit name="block-size" value="16x16" />
+            <Limit name="block-count" range="1-8160" />
+            <Limit name="blocks-per-second" range="1-244800" />
+            <Limit name="bitrate" range="1-80000000" />
+            <Limit name="concurrent-instances" max="4" />
+        </MediaCodec>
+    </Decoders>
+    <!-- apply23a: Broadwell's HD 5300 has no VP9 or AV1 hardware, and the software decoders made
+         YouTube burn the CPU (VP9 at 1080p dropped frames on the 4.5 W chip). Disabled so apps pick
+         H.264, which c2.ffmpeg decodes on the GPU (VA-API). Remove this block to bring them back. -->
+    <Decoders>
+        <MediaCodec name="c2.android.vp9.decoder" update="true" enabled="false" />
+        <MediaCodec name="c2.android.av1-dav1d.decoder" update="true" enabled="false" />
+        <MediaCodec name="c2.android.av1.decoder" update="true" enabled="false" />
+    </Decoders>
+</MediaCodecs>

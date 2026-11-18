@@ -1,0 +1,957 @@
+diff --git a/BoardConfig.mk b/BoardConfig.mk
+index 077c573..2907b3e 100644
+--- a/BoardConfig.mk
++++ b/BoardConfig.mk
+@@ -21,7 +21,7 @@ include device/virt/virt-common/BoardConfigVirtCommon.mk
+ # Partitions
+ # virt-common's A/B super is 12 GB. The dynamic partitions need about 3 GB, so keep super
+ # small and leave the rest of the disk to userdata. Must match pc_create_partition_table.sh.
+-BOARD_SUPER_PARTITION_SIZE := 4294967296 # 4 GB
++BOARD_SUPER_PARTITION_SIZE := 10737418240 # 10 GB (WT20: room for GApps and updates)
+ BOARD_VIRT_DYNAMIC_PARTITIONS_SIZE := $(shell expr $(BOARD_SUPER_PARTITION_SIZE) - 4194304 )
+ $(call soong_config_set,VIRT_PREINSTALL_CHECK,SUPER_PARTITION_SIZE,$(BOARD_SUPER_PARTITION_SIZE))
+ # virt-common's 2048 inodes don't hold the firmware (vendor/pc/firmware: GPU, Wi-Fi and
+@@ -127,7 +127,8 @@ TARGET_KERNEL_ARCH := x86
+ TARGET_KERNEL_CONFIG_EXT += \
+     $(DEVICE_PATH)/configs/kernel/vm.config \
+     $(DEVICE_PATH)/configs/kernel/pc.config \
+-    $(DEVICE_PATH)/configs/kernel/cherrytrail.config
++    $(DEVICE_PATH)/configs/kernel/cherrytrail.config \
++    device/pc/wt20/wt20.config
+ 
+ # Pre-install checks (virt-common's checker is VM specific; pc_create_partition_table.sh
+ # does the checks for this target)
+@@ -150,3 +151,54 @@ SYSTEM_EXT_PUBLIC_SEPOLICY_DIRS += \
+ # VINTF
+ DEVICE_MANIFEST_FILE += \
+     $(DEVICE_PATH)/configs/vintf/manifest.xml
++
++# Toshiba Portege WT20-B (device/pc/wt20)
++# SELinux: labels for the sensor hub's IIO devices
++BOARD_VENDOR_SEPOLICY_DIRS += device/pc/wt20/sepolicy
++# ARM apps through Google's ARM64-to-x86_64 translator (options.mk: WT20_ARM_TRANSLATION): arm64-v8a
++# in the ABI list, the SELinux rules for its binfmt_misc handlers
++ifeq ($(WT20_ARM_TRANSLATION),true)
++include vendor/google/ndk_translation/BoardConfigNdkTranslation.mk
++endif
++# Only the modules this tablet uses: the Intel GPU and Wi-Fi (iwlwifi 7265) besides
++# virt-common's btusb / cfg80211 / virt_wifi. The other GPU and Wi-Fi drivers stay on
++# /vendor but aren't loaded at boot (67 modules, RAM and boot time on 4 GB).
++BOARD_VENDOR_KERNEL_MODULES_LOAD := \
++    btusb.ko \
++    cfg80211.ko \
++    virt_wifi.ko \
++    i915.ko \
++    iwlwifi.ko \
++    iwlmvm.ko
++
++# Toshiba Portege WT20-B: Intel RAPL powercap driver (device/pc/wt20/options.mk: WT20_RAPL)
++ifeq ($(WT20_RAPL),true)
++TARGET_KERNEL_CONFIG_EXT += device/pc/wt20/wt20-rapl.config
++endif
++
++# Toshiba Portege WT20-B: SELinux for its thermal HAL (device/pc/wt20/options.mk: WT20_THERMAL_HAL)
++ifeq ($(WT20_THERMAL_HAL),true)
++BOARD_VENDOR_SEPOLICY_DIRS += device/pc/wt20/thermal/sepolicy
++endif
++
++# WT20_WIFI_STA_AP (device/pc/wt20/options.mk, apply15p): AIDL Wi-Fi HAL with the emulators'
++# generic nl80211 legacy HAL (no vendor commands; uses the wlan0 / wlan1 that exist) and the
++# 7265's combinations: (1 STA + 1 P2P) or (1 STA + 1 AP, same channel, iwlwifi mvm)
++ifeq ($(WT20_WIFI_STA_AP),true)
++BOARD_WLAN_DEVICE := emulator
++WIFI_HAL_INTERFACE_COMBINATIONS := {{{STA}, 1}, {{P2P}, 1}}, {{{STA}, 1}, {{AP}, 1}}
++BOARD_VENDOR_SEPOLICY_DIRS += device/pc/wt20/wifi_ap/sepolicy
++endif
++
++# WT20_HW_VIDEO_DECODE (device/pc/wt20/options.mk, apply17c): SELinux for the FFmpeg VA-API
++# Codec2 HAL (mediacodec domain: binder, its label, the kill-switch property)
++ifeq ($(WT20_HW_VIDEO_DECODE),true)
++BOARD_VENDOR_SEPOLICY_DIRS += device/pc/wt20/media/sepolicy
++endif
++
++# WT20_PERF_HUD (device/pc/wt20/options.mk, apply18a): SELinux for the WT20 HUD app, system_ext
++# private policy: platform_app may read /proc/stat, /proc/meminfo, cpufreq, the thermal zones,
++# the i915 GPU counters and the battery's power_supply files
++ifeq ($(WT20_PERF_HUD),true)
++SYSTEM_EXT_PRIVATE_SEPOLICY_DIRS += device/pc/wt20/apps/PerfHud/sepolicy
++endif
+diff --git a/bootmgr/grub/grub-boot.cfg b/bootmgr/grub/grub-boot.cfg
+index 3a96017..fb551ac 100644
+--- a/bootmgr/grub/grub-boot.cfg
++++ b/bootmgr/grub/grub-boot.cfg
+@@ -20,6 +20,18 @@ function set_kernel_cmdline_dynamic_device_specific {
+ 	else
+ 		set gfxpayload=auto
+ 	fi
++
++	# Models whose Intel GPU needs the pre-Skylake workarounds get them on every entry (the
++	# plain one gave a black screen). Toshiba Portege WT20-B: Broadwell HD 5300. All of
++	# them: with hardware planes enabled i915 rejects drm_hwcomposer's test commits every
++	# frame and the screen flickers black.
++	insmod smbios
++	insmod regexp
++	set system_product=
++	smbios --type 1 --get-string 5 --set system_product
++	if regexp 'WT20' "$system_product"; then
++		set kernel_cmdline_dynamic_device_specific="androidboot.gpu=intel androidboot.gpu_workaround=all androidboot.hardware_vulkan=intel_hasvk"
++	fi
+ }
+ 
+ submenu 'Advanced options (pc_x86_64 specific)' --class format-list-bulleted --id advancedoptions-pc_x86_64 {
+@@ -32,3 +44,54 @@ submenu 'Advanced options (pc_x86_64 specific)' --class format-list-bulleted --i
+ 		boot_android androidboot.graphics=swiftshader
+ 	}
+ }
++
++# Toshiba Portege WT20-B: a tablet with no keyboard, so no boot menu to wait on. Boot straight
++# into Android unless a timeout was saved in grubenv (GRUB settings menu, or Android writing
++# grub_timeout to /mnt/vendor/persist/grubenv). Runs after the common config set the timeout.
++insmod smbios
++insmod regexp
++smbios --type 1 --get-string 5 --set wt20_product
++if regexp 'WT20' "$wt20_product"; then
++	if [ -z "$grub_timeout" ]; then
++		set timeout=0
++	fi
++fi
++
++# Dual boot (apply20a): Windows on the same disk as Android, each with its own EFI partition.
++# The entry only exists when Windows' boot manager is found in one of the first partitions of
++# the Android disk (its EFI system partition), so nothing changes on a single-OS install.
++set wt20_windows_esp=
++set wt20_windows_root=
++for wt20_part in gpt1 gpt2 gpt3 gpt4; do
++	if [ -z "$wt20_windows_esp" ]; then
++		if [ -f (${disk_boot},${wt20_part})/EFI/Microsoft/Boot/bootmgfw.efi ]; then
++			set wt20_windows_esp="(${disk_boot},${wt20_part})"
++			set wt20_windows_root="${disk_boot},${wt20_part}"
++		fi
++	fi
++done
++export wt20_windows_esp
++export wt20_windows_root
++if [ -n "$wt20_windows_esp" ]; then
++	insmod chain
++	menuentry "Windows" --class windows --id windows {
++		echo 'Starting Windows...'
++		# the chainloader gives the started image the ROOT device as its boot device (that is
++		# where Windows Boot Manager looks for its BCD), not the device in the file name
++		set root=${wt20_windows_root}
++		chainloader /EFI/Microsoft/Boot/bootmgfw.efi
++	}
++	# Two systems: show the menu for 5 seconds (Volume keys move, Power selects) unless a
++	# timeout was saved, then boot the default one, Android
++	if [ -z "$grub_timeout" ]; then
++		set timeout=5
++	fi
++	# "Restart into Windows" from Android (wt20_next_os=windows in grubenv): Windows, once
++	set wt20_next_os=
++	load_env -f ${partition_persist}/grubenv wt20_next_os
++	if [ "$wt20_next_os" = "windows" ]; then
++		save_setting wt20_next_os
++		set default=windows
++		set timeout=0
++	fi
++fi
+diff --git a/configs/fstab/fstab.pc-common b/configs/fstab/fstab.pc-common
+index 4153957..8eea954 100644
+--- a/configs/fstab/fstab.pc-common
++++ b/configs/fstab/fstab.pc-common
+@@ -5,3 +5,5 @@
+ 
+ # The installer USB stick is found by virt-common's voldmanaged=usb entry, whatever its disk name
+ 
++# Realtek PCIe card reader (Toshiba WT20 microSD slot): portable or adoptable storage
++/devices/*/rtsx_pci_sdmmc.0/mmc_host/* auto auto defaults voldmanaged=sdcard1:auto,encryptable=userdata
+diff --git a/configs/init/ueventd.pc.rc b/configs/init/ueventd.pc.rc
+index 2030b3c..08fd78f 100644
+--- a/configs/init/ueventd.pc.rc
++++ b/configs/init/ueventd.pc.rc
+@@ -1,3 +1,48 @@
+ # Laptop backlights (amdgpu_bl0, intel_backlight, acpi_video0, ...): the lights HAL runs as
+ # system. ueventd matches the pattern against /sys/class/backlight/<name>, whatever the name.
+ /sys/class/backlight/*    brightness    0664    system    system
++# IIO sensor devices (WT20 sensor hub): the sensors HAL runs as system
++/dev/iio:device*          0660    system    system
++# ...and the sysfs attributes it writes to stream them (buffer, trigger, channel enables,
++# rates), which the kernel creates root-only: without this the HAL logs "Failed enabling
++# buffer" and no sensor delivers events (no auto-rotation). ueventd matches the pattern
++# against /sys/bus/iio/devices/<name>; missing attributes are skipped.
++/sys/bus/iio/devices/iio:device*  buffer/enable                                    0660  system  system
++/sys/bus/iio/devices/iio:device*  buffer/length                                    0660  system  system
++/sys/bus/iio/devices/iio:device*  buffer/watermark                                 0660  system  system
++/sys/bus/iio/devices/iio:device*  trigger/current_trigger                          0660  system  system
++/sys/bus/iio/devices/iio:device*  current_timestamp_clock                          0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_timestamp_en                    0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_accel_x_en                      0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_accel_y_en                      0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_accel_z_en                      0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_anglvel_x_en                    0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_anglvel_y_en                    0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_anglvel_z_en                    0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_magn_x_en                       0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_magn_y_en                       0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_magn_z_en                       0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_incli_x_en                      0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_incli_y_en                      0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_incli_z_en                      0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_rot_from_north_magnetic_tilt_comp_en 0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_rot_quaternion_en               0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_illuminance_en                  0660  system  system
++/sys/bus/iio/devices/iio:device*  scan_elements/in_intensity_both_en               0660  system  system
++/sys/bus/iio/devices/iio:device*  in_accel_sampling_frequency                      0660  system  system
++/sys/bus/iio/devices/iio:device*  in_anglvel_sampling_frequency                    0660  system  system
++/sys/bus/iio/devices/iio:device*  in_magn_sampling_frequency                       0660  system  system
++/sys/bus/iio/devices/iio:device*  in_rot_sampling_frequency                        0660  system  system
++/sys/bus/iio/devices/iio:device*  in_incli_sampling_frequency                      0660  system  system
++/sys/bus/iio/devices/iio:device*  in_illuminance_sampling_frequency                0660  system  system
++/sys/bus/iio/devices/iio:device*  in_intensity_sampling_frequency                  0660  system  system
++/sys/bus/iio/devices/iio:device*  in_accel_hysteresis                              0660  system  system
++/sys/bus/iio/devices/iio:device*  in_anglvel_hysteresis                            0660  system  system
++/sys/bus/iio/devices/iio:device*  in_magn_hysteresis                               0660  system  system
++/sys/bus/iio/devices/iio:device*  in_rot_hysteresis                                0660  system  system
++/sys/bus/iio/devices/iio:device*  in_incli_hysteresis                              0660  system  system
++/sys/bus/iio/devices/iio:device*  in_illuminance_hysteresis                        0660  system  system
++/sys/bus/iio/devices/iio:device*  in_intensity_hysteresis                          0660  system  system
++
++# The Bluetooth HAL (user bluetooth) blocks/unblocks the adapter through rfkill
++/dev/rfkill               0660    root      bluetooth
+diff --git a/configs/permissions/pc_desktop.xml b/configs/permissions/pc_desktop.xml
+index 6f99f89..1b1fe15 100644
+--- a/configs/permissions/pc_desktop.xml
++++ b/configs/permissions/pc_desktop.xml
+@@ -8,18 +8,16 @@
+      most apps implicitly require android.hardware.touchscreen, and app stores hide them on
+      devices without it, while mouse clicks work as touches anyway. -->
+ <permissions>
+-    <!-- A PC: apps and the system adapt to keyboard and mouse, the display isn't rotated,
+-         and with freeform windows the display starts in desktop windowing mode -->
+-    <feature name="android.hardware.type.pc" />
++    <!-- WT20 tablet: not a PC (virt-common declares android.hardware.type.pc for every
++         non-TV product; this unavailable-feature wins), so the tablet UI and auto-rotation
++         stay. Freeform windows for desktop windowing when a keyboard and touchpad are docked. -->
++    <unavailable-feature name="android.hardware.type.pc" />
+     <feature name="android.software.freeform_window_management" />
+ 
+-    <!-- Sensors desktops and regular laptops don't have: declared by tablet_core_hardware.xml
+-         and by virt-common for its virtual sensors -->
+-    <unavailable-feature name="android.hardware.sensor.accelerometer" />
++    <!-- Sensors the WT20 doesn't have. Its sensor hub provides the accelerometer, compass,
++         gyroscope and light sensor (device/pc/wt20). -->
+     <unavailable-feature name="android.hardware.sensor.ambient_temperature" />
+     <unavailable-feature name="android.hardware.sensor.barometer" />
+-    <unavailable-feature name="android.hardware.sensor.compass" />
+-    <unavailable-feature name="android.hardware.sensor.gyroscope" />
+     <unavailable-feature name="android.hardware.sensor.hinge_angle" />
+     <unavailable-feature name="android.hardware.sensor.proximity" />
+     <unavailable-feature name="android.hardware.sensor.relative_humidity" />
+diff --git a/configs/scripts/pc_bt_detect.sh b/configs/scripts/pc_bt_detect.sh
+index 52bf3dd..4ca9622 100644
+--- a/configs/scripts/pc_bt_detect.sh
++++ b/configs/scripts/pc_bt_detect.sh
+@@ -78,6 +78,15 @@ case "$1" in
+         log "Bluetooth forced off (androidboot.bluetooth)"
+         ;;
+     *)
++        # Toshiba (toshiba_bluetooth ACPI driver, e.g. Portege WT20-B): the adapter's USB
++        # device is powered only after an rfkill unblock, so pulse the switch first
++        if ! has_bluetooth; then
++            for r in /sys/class/rfkill/rfkill*; do
++                [ "$(cat $r/name 2>/dev/null)" = "Toshiba Bluetooth" ] || continue
++                echo 1 > $r/soft && sleep 0.5 && echo 0 > $r/soft
++                log "pulsed ${r##*/} (Toshiba Bluetooth) to power the adapter"
++            done
++        fi
+         found=0
+         waited=0
+         stable=0
+diff --git a/configs/scripts/pc_create_partition_table.sh b/configs/scripts/pc_create_partition_table.sh
+index 1e683e0..db85a31 100644
+--- a/configs/scripts/pc_create_partition_table.sh
++++ b/configs/scripts/pc_create_partition_table.sh
+@@ -7,24 +7,39 @@
+ #
+ # $1: sgdisk executable
+ # $2: disk name (e.g. nvme0n1, sda, mmcblk0)
+-# $3: 1 to erase the disk, 0 to keep an existing LineageOS layout and its data
++# $3: 1 to erase the disk, 0 to keep an existing LineageOS layout and its data, 2 to install
++#     next to the system already on the disk (dual boot, see below)
+ # $4: ro.build.ab_update
+ #
+ # The partition numbers match virt-common's A/B layout (partitions 1-11, which GRUB and the
+-# fstab rely on) plus userdata as partition 12, which takes the rest of the disk.
++# SELinux file contexts rely on) plus userdata as partition 12, which takes the rest of the disk.
+ # SUPER_SIZE must match BOARD_SUPER_PARTITION_SIZE in BoardConfig.mk.
++#
++# Dual boot (mode 2, WT20 apply20a): the same partitions, in the same order, go into the largest
++# free block of a GPT disk that already holds another system (Windows), as GPT entries 21-33:
++# the usual number plus DUAL_BASE. Nothing that exists is moved, resized or deleted, and the
++# other system's EFI system partition is not written to: LineageOS gets its own (entry 21, a
++# plain Linux-type partition, so neither the firmware nor Windows picks it up by itself). The
++# free block has to be made beforehand, by shrinking a partition from the other system.
+ 
++# Android's sgdisk only takes the long options (its popt is a getopt_long wrapper without a short
++# option string): --info=N, not -i N.
+ SGDISK_EXEC=$1
+ DISK_NAME=$2
+ ERASE=$3
+ AB_OTA_UPDATER=$4
+ 
+ EFI_SIZE=256M
+-SUPER_SIZE=4G
++SUPER_SIZE=10G
+ 
+ # 12 GB in 512-byte sectors (pc_install_disk_select's kMinDiskBytes)
+ MIN_DISK_SECTORS=23437500
+ 
++# Dual boot: offset of the GPT entry numbers, and the smallest free block to install into
++# (24 GiB in 512-byte sectors: 11 GiB of system partitions and at least 13 GiB of userdata)
++DUAL_BASE=20
++MIN_DUAL_SECTORS=50331648
++
+ # Level 6 stays off the screen (loglevel=3 on the kernel command line), level 2 shows up
+ log() {
+     echo "<6>pc_install: $*" > /dev/kmsg
+@@ -42,9 +57,24 @@ fail() {
+     exit 1
+ }
+ 
+-has_lineage_layout() { # disk
+-    $SGDISK_EXEC -i 2 /dev/block/$1 2>/dev/null | grep -q "Partition name: 'super'" &&
+-        $SGDISK_EXEC -i 12 /dev/block/$1 2>/dev/null | grep -q "Partition name: 'userdata'"
++has_lineage_layout() { # disk, entry number offset (0, or DUAL_BASE)
++    $SGDISK_EXEC --info=$(( $2 + 2 )) /dev/block/$1 2>/dev/null | grep -q "Partition name: 'super'" &&
++        $SGDISK_EXEC --info=$(( $2 + 12 )) /dev/block/$1 2>/dev/null | grep -q "Partition name: 'userdata'"
++}
++
++part_name() { # entry number: prints the partition's GPT name, nothing if the entry is empty
++    $SGDISK_EXEC --info=$1 $TARGET 2>/dev/null | sed -n "s/^Partition name: '\(.*\)'\$/\1/p"
++}
++
++part_exists() { # entry number
++    $SGDISK_EXEC --info=$1 $TARGET 2>/dev/null | grep -q "^Partition unique GUID"
++}
++
++log_table() { # title
++    log "$1"
++    $SGDISK_EXEC --print $TARGET 2>/dev/null | while read -r line; do
++        log "  $line"
++    done
+ }
+ 
+ [ -x "$SGDISK_EXEC" ] || fail "sgdisk not found"
+@@ -57,6 +87,9 @@ TARGET=/dev/block/$DISK_NAME
+ [ "$(cat /sys/block/$DISK_NAME/size)" -ge "$MIN_DISK_SECTORS" ] || fail "$DISK_NAME is smaller than 12 GB"
+ log "install disk: $DISK_NAME ($(( $(cat /sys/block/$DISK_NAME/size) / 2097152 )) GiB)"
+ 
++# Entry number offset of the layout this run works on
++BASE=0
++
+ # vendor.create_partition_table.start is left unset: in init.recovery.virt.rc it starts
+ # preinstall_check, which only knows the VM disk and GPU layout.
+ 
+@@ -78,14 +111,89 @@ if [ "$ERASE" = "1" ]; then
+     # which takes the rest of the disk
+     $SGDISK_EXEC --new=13:0:+8M --typecode=13:0700 --change-name=13:pc_logs $TARGET
+     $SGDISK_EXEC --new=12:0:0 --change-name=12:userdata $TARGET
+-elif has_lineage_layout $DISK_NAME; then
++elif [ "$ERASE" = "2" ]; then
++    BASE=$DUAL_BASE
++    disk_sectors=$(cat /sys/block/$DISK_NAME/size)
++    # The shell's arithmetic is 32-bit, and the sector numbers below are computed with it
++    [ "$disk_sectors" -lt 2000000000 ] || fail "$DISK_NAME is too large for a dual-boot install"
++    [ "$(cat /sys/block/$DISK_NAME/queue/logical_block_size)" = "512" ] ||
++        fail "$DISK_NAME does not have 512-byte sectors"
++    $SGDISK_EXEC --print $TARGET 2>/dev/null | grep -q " EF00 " ||
++        fail "$DISK_NAME has no EFI system partition: there is no UEFI system to install next to"
++    log_table "partition table of $DISK_NAME before the dual-boot install:"
++
++    if has_lineage_layout $DISK_NAME $BASE; then
++        super_sectors=$($SGDISK_EXEC --info=$(( BASE + 2 )) $TARGET | sed -n 's/^Partition size: \([0-9]*\) sectors.*/\1/p')
++        [ "$super_sectors" = "$(( ${SUPER_SIZE%G} * 2097152 ))" ] ||
++            fail "$DISK_NAME has an older dual-boot LineageOS layout; delete its partitions (entries 21-33) first"
++        log "$DISK_NAME already has the dual-boot LineageOS layout: installing over it, its Android data is erased"
++    else
++        for n in $(seq $(( BASE + 1 )) $(( BASE + 13 ))); do
++            if part_exists $n; then
++                fail "GPT entry $n of $DISK_NAME is in use"
++            fi
++        done
++        # /dev/block/by-name must lead to the new partitions: a partition of the other system
++        # that carries one of their names gets a prefix (its name means nothing to Windows)
++        for n in $(seq 1 $BASE); do
++            name=$(part_name $n)
++            case "$name" in
++                EFI|super|misc|persist|metadata|firmware|vendor_boot_a|vendor_boot_b|boot_a|boot_b|BIOS|userdata|pc_logs)
++                    log "renaming partition $n ('$name') to 'other_$name'"
++                    $SGDISK_EXEC --change-name=$n:other_$name $TARGET > /dev/null ||
++                        fail "could not rename partition $n"
++                    ;;
++            esac
++        done
++
++        first=$($SGDISK_EXEC --first-aligned-in-largest $TARGET 2>/dev/null | tail -n 1)
++        last=$($SGDISK_EXEC --end-of-largest $TARGET 2>/dev/null | tail -n 1)
++        case "$first$last" in
++            ''|*[!0-9]*) fail "could not find the free space on $DISK_NAME" ;;
++        esac
++        # Whole MiBs only
++        first=$(( (first + 2047) / 2048 * 2048 ))
++        last=$(( (last + 1) / 2048 * 2048 - 1 ))
++        free=$(( last - first + 1 ))
++        [ "$free" -ge "$MIN_DUAL_SECTORS" ] ||
++            fail "the largest free block of $DISK_NAME is $(( free / 2048 )) MiB: shrink a partition to leave at least $(( MIN_DUAL_SECTORS / 2097152 )) GiB unallocated"
++        log "installing into $(( free / 2048 )) MiB of free space (sectors $first-$last)"
++
++        # One sgdisk run, so the table is written once: every partition right after the
++        # previous one, userdata up to the end of the block
++        args=
++        next=$first
++        add() { # number, name, size in MiB
++            args="$args --new=$1:$next:$(( next + $3 * 2048 - 1 )) --typecode=$1:8300 --change-name=$1:$2"
++            next=$(( next + $3 * 2048 ))
++        }
++        add $(( BASE + 1 )) EFI ${EFI_SIZE%M}
++        add $(( BASE + 2 )) super $(( ${SUPER_SIZE%G} * 1024 ))
++        add $(( BASE + 3 )) misc 1
++        add $(( BASE + 4 )) persist 16
++        add $(( BASE + 5 )) metadata 32
++        add $(( BASE + 6 )) firmware 128
++        add $(( BASE + 7 )) vendor_boot_a 100
++        add $(( BASE + 8 )) vendor_boot_b 100
++        add $(( BASE + 9 )) boot_a 80
++        add $(( BASE + 10 )) boot_b 80
++        add $(( BASE + 11 )) BIOS 4
++        add $(( BASE + 13 )) pc_logs 8
++        args="$args --new=$(( BASE + 12 )):$next:$last --typecode=$(( BASE + 12 )):8300 --change-name=$(( BASE + 12 )):userdata"
++        $SGDISK_EXEC $args $TARGET > /dev/null || fail "could not create the partitions on $DISK_NAME"
++        log_table "partition table of $DISK_NAME after the dual-boot install:"
++    fi
++elif has_lineage_layout $DISK_NAME 0 || has_lineage_layout $DISK_NAME $DUAL_BASE; then
++    if ! has_lineage_layout $DISK_NAME 0; then
++        BASE=$DUAL_BASE
++    fi
+     # super_empty_raw.img and OTAs expect super to be exactly SUPER_SIZE
+-    super_sectors=$($SGDISK_EXEC -i 2 $TARGET | sed -n 's/^Partition size: \([0-9]*\) sectors.*/\1/p')
++    super_sectors=$($SGDISK_EXEC --info=$(( BASE + 2 )) $TARGET | sed -n 's/^Partition size: \([0-9]*\) sectors.*/\1/p')
+     [ "$super_sectors" = "$(( ${SUPER_SIZE%G} * 2097152 ))" ] ||
+         fail "$DISK_NAME has an older LineageOS layout; choose the erase option to install on it"
+     log "$DISK_NAME already has the LineageOS layout, keeping it and its data"
+-    $SGDISK_EXEC --change-name=7:vendor_boot_a $TARGET
+-    $SGDISK_EXEC --change-name=8:vendor_boot_b $TARGET
++    $SGDISK_EXEC --change-name=$(( BASE + 7 )):vendor_boot_a $TARGET
++    $SGDISK_EXEC --change-name=$(( BASE + 8 )):vendor_boot_b $TARGET
+ else
+     fail "$DISK_NAME has no LineageOS layout to keep; choose the erase option to install on it"
+ fi
+@@ -97,7 +205,28 @@ for i in $(seq 1 50); do
+ done
+ [ -e /dev/block/by-name/userdata ] || fail "partitions on $DISK_NAME did not show up"
+ 
+-if [ "$ERASE" = "1" ]; then
++if [ "$BASE" != "0" ]; then
++    # Everything from here on, and the system installer after it, writes through
++    # /dev/block/by-name: make sure each name leads to the new partition and not to one of
++    # the other system
++    n=0
++    for name in EFI super misc persist metadata firmware vendor_boot_a vendor_boot_b boot_a boot_b BIOS userdata pc_logs; do
++        n=$(( n + 1 ))
++        link=
++        for i in $(seq 1 25); do
++            link=$(readlink /dev/block/by-name/$name 2>/dev/null) || true
++            if [ -n "$link" ]; then
++                break
++            fi
++            sleep 0.2
++        done
++        [ "${link##*[!0-9]}" = "$(( BASE + n ))" ] ||
++            fail "/dev/block/by-name/$name is '$link', not partition $(( BASE + n )) of $DISK_NAME"
++    done
++    log "the by-name links lead to partitions $(( BASE + 1 ))-$(( BASE + 13 ))"
++fi
++
++if [ "$ERASE" != "0" ]; then
+     # Clear the start of metadata and userdata so Android formats them on first boot. Only a
+     # few domains may write metadata, so pc_clear_partitions.sh does it as recovery
+     # (init.recovery.pc.rc).
+@@ -116,7 +245,7 @@ if [ "$ERASE" = "1" ]; then
+         fail "could not clear the metadata and userdata partitions"
+ fi
+ 
+-if [ "$ERASE" = "1" ] && [ -f /system/etc/pc_logs.img.gz ]; then
++if [ "$ERASE" != "0" ] && [ -f /system/etc/pc_logs.img.gz ]; then
+     for i in $(seq 1 25); do
+         [ -e /dev/block/by-name/pc_logs ] && break
+         sleep 0.2
+@@ -125,11 +254,16 @@ if [ "$ERASE" = "1" ] && [ -f /system/etc/pc_logs.img.gz ]; then
+         log "could not format the pc_logs partition, logs will go to the USB stick only"
+ fi
+ 
+-if [ -f "/system/etc/MBR.img" ]; then
++# BIOS boot code in the MBR: not on a dual-boot disk, whose MBR belongs to the other system
++# (dual boot is UEFI only)
++if [ "$BASE" = "0" ] && [ -f "/system/etc/MBR.img" ]; then
+     dd if=/system/etc/MBR.img of=$TARGET bs=446 count=1
+ fi
+ 
+-if [ -f "/system/etc/super_empty_raw.img" ] && ! dd if=/dev/block/by-name/super bs=256k count=1|strings|grep virt_dynamic_partitions > /dev/null; then
++# After an erase the new super partition starts where the old one did, so the previous install's
++# metadata (possibly with another group size) is still readable there: always write a fresh one.
++if [ -f "/system/etc/super_empty_raw.img" ] && { [ "$ERASE" != "0" ] ||
++        ! dd if=/dev/block/by-name/super bs=256k count=1|strings|grep virt_dynamic_partitions > /dev/null; }; then
+     dd if=/system/etc/super_empty_raw.img of=/dev/block/by-name/super
+ fi
+ 
+diff --git a/lineage_pc_x86_64.mk b/lineage_pc_x86_64.mk
+index eace611..111a346 100644
+--- a/lineage_pc_x86_64.mk
++++ b/lineage_pc_x86_64.mk
+@@ -3,6 +3,10 @@
+ # SPDX-License-Identifier: Apache-2.0
+ #
+ 
++# Toshiba WT20 tablet build options (sensors, cameras): plain include, read before the
++# inherited makefiles below
++include device/pc/wt20/options.mk
++
+ # Inherit from those products. Most specific first.
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
+ $(call inherit-product, $(SRC_TARGET_DIR)/product/full_base.mk)
+@@ -14,6 +18,9 @@ $(call inherit-product, vendor/lineage/config/common_full_tablet_wifionly.mk)
+ # Inherit from device
+ $(call inherit-product, device/pc/pc_x86_64/device.mk)
+ 
++# Toshiba WT20 tablet additions (sensor features, remote access, zram)
++$(call inherit-product, device/pc/wt20/wt20.mk)
++
+ PRODUCT_NAME := lineage_pc_x86_64
+ PRODUCT_DEVICE := pc_x86_64
+ PRODUCT_BRAND := PC
+@@ -23,3 +30,7 @@ PRODUCT_MODEL := PC x86_64
+ PRODUCT_VENDOR_PROPERTIES += \
+     ro.soc.manufacturer=$(PRODUCT_MANUFACTURER) \
+     ro.soc.model=$(PRODUCT_DEVICE)
++
++
++# Google apps (MindTheGapps x86_64, built in)
++$(call inherit-product, vendor/gapps/gapps.mk)
+diff --git a/recovery/pc_install_disk_select/pc_install_disk_select.cpp b/recovery/pc_install_disk_select/pc_install_disk_select.cpp
+index 4c64d6e..c33e21b 100644
+--- a/recovery/pc_install_disk_select/pc_install_disk_select.cpp
++++ b/recovery/pc_install_disk_select/pc_install_disk_select.cpp
+@@ -331,9 +331,13 @@ size_t RunMenu(const std::vector<Line>& header, const std::vector<std::string>&
+     }
+ }
+ 
+-void Choose(const std::string& disk, bool erase) {
+-    LOG(INFO) << "installing to " << disk << (erase ? ", erasing it" : ", keeping data");
+-    SetProperty("vendor.pc_install.erase", erase ? "1" : "0");
++// mode: "0" keeps an existing LineageOS layout and its data, "1" erases the disk, "2" installs
++// into the disk's free space, next to the system that is already there (dual boot)
++void Choose(const std::string& disk, const std::string& mode) {
++    LOG(INFO) << "installing to " << disk
++              << (mode == "1" ? ", erasing it"
++                              : mode == "2" ? ", next to the existing system" : ", keeping data");
++    SetProperty("vendor.pc_install.erase", mode);
+     // Set last: pc_create_partition_table.sh starts when this one is set.
+     SetProperty("vendor.pc_install.disk", disk);
+ }
+@@ -349,7 +353,8 @@ int main(int /* argc */, char** argv) {
+     // Disk given on the kernel command line: no questions asked
+     std::string preset = GetProperty("ro.boot.install_disk", "");
+     if (!preset.empty()) {
+-        Choose(preset, GetProperty("ro.boot.install_erase", "0") == "1");
++        std::string mode = GetProperty("ro.boot.install_erase", "0");
++        Choose(preset, mode == "1" || mode == "2" ? mode : "0");
+         return 0;
+     }
+ 
+@@ -446,7 +451,7 @@ int main(int /* argc */, char** argv) {
+         bool erase = !(disk.has_lineage && action == 0);
+ 
+         Draw({{"Preparing " + disk.name + "...", Line::kTitle}}, {}, {}, 0, {});
+-        Choose(disk.name, erase);
++        Choose(disk.name, erase ? "1" : "0");
+         return 0;
+     }
+ }
+diff --git a/sepolicy/private/pc_logcat.te b/sepolicy/private/pc_logcat.te
+index b987dc6..eeb6c31 100644
+--- a/sepolicy/private/pc_logcat.te
++++ b/sepolicy/private/pc_logcat.te
+@@ -11,3 +11,6 @@ get_prop(pc_logcat, logd_prop)
+ 
+ # stdio_to_kmsg: init hands stdout over as /dev/kmsg_debug
+ allow pc_logcat { kmsg_device kmsg_debug_device }:chr_file { getattr w_file_perms };
++
++# toybox probes the kmsg_debug fd for a tty (TCGETS) before writing; harmless
++dontaudit pc_logcat kmsg_debug_device:chr_file ioctl;
+diff --git a/sepolicy/vendor/file_contexts b/sepolicy/vendor/file_contexts
+index 6a79c85..4ab8ccc 100644
+--- a/sepolicy/vendor/file_contexts
++++ b/sepolicy/vendor/file_contexts
+@@ -20,6 +20,24 @@
+ /dev/block/sd[a-z][a-z]?13						u:object_r:pc_logs_block_device:s0
+ /dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])12		u:object_r:userdata_block_device:s0
+ /dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])13		u:object_r:pc_logs_block_device:s0
++# Dual boot (pc_create_partition_table.sh mode 2): the same partitions as GPT entries 21-33,
++# the number above + 20. The other system's partitions keep the low numbers and so pick up the
++# labels above; nothing opens them (everything goes through /dev/block/by-name, which the
++# installer checks leads to the entries below).
++/dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])22		u:object_r:super_block_device:s0
++/dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])23		u:object_r:misc_block_device:s0
++/dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])24		u:object_r:persist_block_device:s0
++/dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])25		u:object_r:metadata_block_device:s0
++/dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])(2[7-9]|30)	u:object_r:boot_block_device:s0
++/dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])32		u:object_r:userdata_block_device:s0
++/dev/block/(mmcblk[0-9]+p|nvme[0-9]+n[0-9]+p|vd[a-z])33		u:object_r:pc_logs_block_device:s0
++/dev/block/sd[a-z][a-z]?22						u:object_r:super_block_device:s0
++/dev/block/sd[a-z][a-z]?23						u:object_r:misc_block_device:s0
++/dev/block/sd[a-z][a-z]?24						u:object_r:persist_block_device:s0
++/dev/block/sd[a-z][a-z]?25						u:object_r:metadata_block_device:s0
++/dev/block/sd[a-z][a-z]?(2[7-9]|30)					u:object_r:boot_block_device:s0
++/dev/block/sd[a-z][a-z]?32						u:object_r:userdata_block_device:s0
++/dev/block/sd[a-z][a-z]?33						u:object_r:pc_logs_block_device:s0
+ 
+ # Same-process HAL: Mesa's driver (libgallium_dri.so, which mainline-common labels) and RADV
+ # link these for AMD GPUs, and they're loaded into surfaceflinger and app processes
+diff --git a/sepolicy/vendor/vendor_pc_bt_detect.te b/sepolicy/vendor/vendor_pc_bt_detect.te
+index 2cbd55e..64e714f 100644
+--- a/sepolicy/vendor/vendor_pc_bt_detect.te
++++ b/sepolicy/vendor/vendor_pc_bt_detect.te
+@@ -22,3 +22,6 @@ allow vendor_pc_bt_detect persist_file:file create_file_perms;
+ # Keep USB Bluetooth adapters powered during suspend: enable wakeup (power/wakeup, generic
+ # sysfs) on the adapter, its hubs and the USB controller
+ allow vendor_pc_bt_detect sysfs:file w_file_perms;
++
++# Pulsing the Toshiba Bluetooth rfkill switch (soft block/unblock) needs CAP_NET_ADMIN
++allow vendor_pc_bt_detect self:capability net_admin;
+diff --git a/sepolicy/vendor/vendor_pc_save_logs.te b/sepolicy/vendor/vendor_pc_save_logs.te
+index cc3aa63..2f6290f 100644
+--- a/sepolicy/vendor/vendor_pc_save_logs.te
++++ b/sepolicy/vendor/vendor_pc_save_logs.te
+@@ -20,3 +20,6 @@ allow vendor_pc_save_logs pc_logs_file:filesystem getattr;
+ # Ctrl+Alt+Del
+ allow vendor_pc_save_logs proc_pc_cad:file rw_file_perms;
+ set_prop(vendor_pc_save_logs, powerctl_prop)
++
++# Reads the kernel log through /dev/kmsg as well
++allow vendor_pc_save_logs kmsg_device:chr_file r_file_perms;
+diff --git a/services/health/service.cpp b/services/health/service.cpp
+index 6d7ac37..b0a5d14 100644
+--- a/services/health/service.cpp
++++ b/services/health/service.cpp
+@@ -13,15 +13,29 @@
+  * - Desktops never suspend: the service holds a wakelock for them. Not every USB keyboard
+  *   or mouse can wake a desktop, and they have no lid. Laptops suspend as usual (screen
+  *   off, lid closed).
++ * - Batteries that report energy (energy_*, uWh; power_now, uW) instead of charge (charge_*,
++ *   uAh; current_now, uA), as many ACPI batteries do, get their capacity, charge counter,
++ *   current, time to full and state of health converted from energy: the AOSP monitor reads
++ *   only the charge files and would report 0 for all of them.
+  */
+ 
+ #define LOG_TAG "android.hardware.health-service.pc"
+ 
++#include <dirent.h>
++#include <unistd.h>
++
++#include <algorithm>
+ #include <atomic>
++#include <cmath>
++#include <cstdlib>
+ #include <memory>
+ #include <optional>
++#include <string>
+ 
++#include <android-base/file.h>
+ #include <android-base/logging.h>
++#include <android-base/parseint.h>
++#include <android-base/strings.h>
+ #include <android/binder_interface_utils.h>
+ #include <health-impl/Health.h>
+ #include <health/utils.h>
+@@ -32,6 +46,7 @@
+ 
+ using aidl::android::hardware::health::BatteryCapacityLevel;
+ using aidl::android::hardware::health::BatteryHealth;
++using aidl::android::hardware::health::BatteryHealthData;
+ using aidl::android::hardware::health::BatteryStatus;
+ using aidl::android::hardware::health::HalHealthLoop;
+ using aidl::android::hardware::health::Health;
+@@ -39,6 +54,98 @@ using aidl::android::hardware::health::HealthInfo;
+ 
+ namespace {
+ 
++constexpr char kPowerSupply[] = "/sys/class/power_supply";
++
++std::optional<int64_t> ReadInt(const std::string& path) {
++    std::string text;
++    int64_t value;
++    if (!android::base::ReadFileToString(path, &text) ||
++        !android::base::ParseInt(android::base::Trim(text), &value)) {
++        return std::nullopt;
++    }
++    return value;
++}
++
++// The system battery (not a peripheral's, scope "Device") when it reports energy, or ""
++std::string FindBattery() {
++    std::unique_ptr<DIR, decltype(&closedir)> dir(opendir(kPowerSupply), closedir);
++    if (!dir) return {};
++    while (const dirent* entry = readdir(dir.get())) {
++        if (entry->d_name[0] == '.') continue;
++        const std::string path = std::string(kPowerSupply) + "/" + entry->d_name;
++        std::string type, scope;
++        if (android::base::ReadFileToString(path + "/type", &type) &&
++            android::base::Trim(type) == "Battery" &&
++            !(android::base::ReadFileToString(path + "/scope", &scope) &&
++              android::base::Trim(scope) == "Device") &&
++            access((path + "/energy_now").c_str(), R_OK) == 0) {
++            return path;
++        }
++    }
++    return {};
++}
++
++// A battery that reports energy instead of charge, in uWh / uW / uV
++struct EnergyBattery {
++    int64_t full;
++    int64_t design;
++    int64_t now;
++    int64_t power;
++    int64_t nominal_voltage;
++    int64_t voltage;
++
++    // Energy (uWh) to charge (uAh) at the nominal voltage
++    int ChargeUah(int64_t energy) const {
++        return static_cast<int>(energy * 1000000 / nominal_voltage);
++    }
++
++    // Power (uW) to current (uA), Android's sign: positive into the battery, negative out of it
++    int CurrentUa(bool charging) const {
++        const int64_t current = power * 1000000 / voltage;
++        return static_cast<int>(charging ? current : -current);
++    }
++};
++
++std::optional<EnergyBattery> ReadEnergyBattery() {
++    static const std::string battery = FindBattery();
++    if (battery.empty()) return std::nullopt;
++    const auto full = ReadInt(battery + "/energy_full");
++    const auto now = ReadInt(battery + "/energy_now");
++    const auto nominal = ReadInt(battery + "/voltage_min_design");
++    if (!full || !now || !nominal || *nominal <= 0) return std::nullopt;
++    const auto voltage = ReadInt(battery + "/voltage_now");
++    return EnergyBattery{
++            .full = *full,
++            .design = ReadInt(battery + "/energy_full_design").value_or(0),
++            .now = *now,
++            .power = std::abs(ReadInt(battery + "/power_now").value_or(0)),
++            .nominal_voltage = *nominal,
++            .voltage = voltage && *voltage > 0 ? *voltage : *nominal,
++    };
++}
++
++// Fills the charge fields the AOSP monitor left at 0 from an energy-based battery
++void FillFromEnergy(HealthInfo* info) {
++    const auto b = ReadEnergyBattery();
++    if (!b) return;
++    if (info->batteryFullChargeUah <= 0) info->batteryFullChargeUah = b->ChargeUah(b->full);
++    if (info->batteryFullChargeDesignCapacityUah <= 0 && b->design > 0) {
++        info->batteryFullChargeDesignCapacityUah = b->ChargeUah(b->design);
++    }
++    if (info->batteryChargeCounterUah <= 0) info->batteryChargeCounterUah = b->ChargeUah(b->now);
++    if (info->batteryCurrentMicroamps == 0 && b->power > 0) {
++        info->batteryCurrentMicroamps = b->CurrentUa(info->batteryStatus == BatteryStatus::CHARGING);
++    }
++    if (info->batteryCurrentAverageMicroamps == 0) {
++        info->batteryCurrentAverageMicroamps = info->batteryCurrentMicroamps;
++    }
++    if (info->batteryChargeTimeToFullNowSeconds <= 0 &&
++        info->batteryStatus == BatteryStatus::CHARGING && b->power > 0 && b->full > b->now) {
++        // Rounded up: 0 is only allowed once the battery is full
++        info->batteryChargeTimeToFullNowSeconds = ((b->full - b->now) * 3600 + b->power - 1) / b->power;
++    }
++}
++
+ class PcHealth : public Health {
+   public:
+     using Health::Health;
+@@ -47,9 +154,57 @@ class PcHealth : public Health {
+     bool HasBattery() const { return has_battery_; }
+ 
+   protected:
++    ndk::ScopedAStatus getBatteryHealthData(BatteryHealthData* out) override {
++        auto status = Health::getBatteryHealthData(out);
++        if (out->batteryStateOfHealth > 0) return status;
++        const auto b = ReadEnergyBattery();
++        if (!b || b->design <= 0) return status;
++        out->batteryStateOfHealth = std::clamp<int64_t>(std::lround(100.0 * b->full / b->design), 0, 100);
++        return ndk::ScopedAStatus::ok();
++    }
++
++    // The direct getters (BatteryManager.getIntProperty / getLongProperty) answer "unsupported"
++    // without the charge files: use the energy conversion then
++    ndk::ScopedAStatus getChargeCounterUah(int32_t* out) override {
++        auto status = Health::getChargeCounterUah(out);
++        if (status.isOk()) return status;
++        const auto b = ReadEnergyBattery();
++        if (!b) return status;
++        *out = b->ChargeUah(b->now);
++        return ndk::ScopedAStatus::ok();
++    }
++
++    ndk::ScopedAStatus getCurrentNowMicroamps(int32_t* out) override {
++        auto status = Health::getCurrentNowMicroamps(out);
++        if (status.isOk()) return status;
++        const auto b = ReadEnergyBattery();
++        if (!b) return status;
++        *out = b->CurrentUa(IsCharging());
++        return ndk::ScopedAStatus::ok();
++    }
++
++    // ACPI reports no average: the instantaneous value is the best there is
++    ndk::ScopedAStatus getCurrentAverageMicroamps(int32_t* out) override {
++        auto status = Health::getCurrentAverageMicroamps(out);
++        if (status.isOk()) return status;
++        return getCurrentNowMicroamps(out);
++    }
++
++    ndk::ScopedAStatus getEnergyCounterNwh(int64_t* out) override {
++        auto status = Health::getEnergyCounterNwh(out);
++        if (status.isOk()) return status;
++        const auto b = ReadEnergyBattery();
++        if (!b) return status;
++        *out = b->now * 1000;
++        return ndk::ScopedAStatus::ok();
++    }
++
+     void UpdateHealthInfo(HealthInfo* info) override {
+         has_battery_ = info->batteryPresent;
+-        if (info->batteryPresent) return;
++        if (info->batteryPresent) {
++            FillFromEnergy(info);
++            return;
++        }
+ 
+         info->batteryPresent = true;
+         info->chargerAcOnline = true;
+@@ -63,6 +218,11 @@ class PcHealth : public Health {
+     }
+ 
+   private:
++    bool IsCharging() {
++        BatteryStatus status;
++        return Health::getChargeStatus(&status).isOk() && status == BatteryStatus::CHARGING;
++    }
++
+     std::atomic<bool> has_battery_ = false;
+ };
+ 
+diff --git a/services/pc_setup_sound/pc_setup_sound.c b/services/pc_setup_sound/pc_setup_sound.c
+index 88e1b73..39bd904 100644
+--- a/services/pc_setup_sound/pc_setup_sound.c
++++ b/services/pc_setup_sound/pc_setup_sound.c
+@@ -13,18 +13,30 @@
+  * microphone back to the speakers. Volumes go to 100%, which is 0 dB on HDA codecs; the
+  * audio HAL then sets the actual level through Master.
+  *
++ * Capture is unmuted too ("Capture Switch"), at the 0 dB step of "Capture Volume": HDA ADCs
++ * come up muted at their lowest gain, which made every recording silent, and their 100% is a
++ * boost, not 0 dB. Going through ALSA keeps the setting across suspend (the driver restores
++ * its cached amp values). "Internal Mic Boost Volume" is set only when the device gives a
++ * value in ro.vendor.audio.internal_mic_boost (it depends on the microphone).
++ *
+  * It also picks the output and input the audio HAL uses by default, which would otherwise be
+  * card 0 device 0: on PCs card 0 is often the GPU's HDMI audio, whose devices start at 3.
+  */
+ 
+ #define LOG_TAG "pc_setup_sound"
+ 
++#include <fcntl.h>
+ #include <log/log.h>
++#include <sound/asound.h>
++#include <sound/tlv.h>
+ #include <stdbool.h>
+ #include <stdio.h>
++#include <stdlib.h>
+ #include <string.h>
++#include <sys/ioctl.h>
+ #include <sys/system_properties.h>
+ #include <tinyalsa/mixer.h>
++#include <unistd.h>
+ 
+ #define MAX_CARDS 32
+ 
+@@ -47,6 +59,58 @@ static bool is_output_control(const char* name, const char* suffix) {
+     return false;
+ }
+ 
++// The value of an integer control that is 0 dB, from its dB-scale TLV; -1 if it has none
++static int zero_db_value(unsigned int card, const struct mixer_ctl* ctl) {
++    char path[32];
++    snprintf(path, sizeof(path), "/dev/snd/controlC%u", card);
++    int fd = open(path, O_RDONLY | O_CLOEXEC);
++    if (fd < 0) return -1;
++
++    // struct snd_ctl_tlv (numid, length) followed by the TLV itself
++    unsigned int buf[2 + 8] = {};
++    struct snd_ctl_tlv* tlv = (struct snd_ctl_tlv*)buf;
++    tlv->numid = mixer_ctl_get_id(ctl) + 1;  // tinyalsa returns numid - 1
++    tlv->length = sizeof(buf) - sizeof(*tlv);
++    int ret = ioctl(fd, SNDRV_CTL_IOCTL_TLV_READ, tlv);
++    close(fd);
++    // TLV: type, length, min (0.01 dB), step (0.01 dB) | mute flag
++    const unsigned int* data = buf + 2;
++    if (ret < 0 || data[0] != SNDRV_CTL_TLVT_DB_SCALE) return -1;
++    int min = (int)data[2], step = (int)(data[3] & 0xffff);
++    if (step <= 0 || min > 0) return -1;
++    int value = mixer_ctl_get_range_min(ctl) + (-min + step / 2) / step;
++    return value <= mixer_ctl_get_range_max(ctl) ? value : -1;
++}
++
++static unsigned int setup_capture(unsigned int card, struct mixer* mixer) {
++    char boost_prop[PROP_VALUE_MAX] = "";
++    __system_property_get("ro.vendor.audio.internal_mic_boost", boost_prop);
++    unsigned int changed = 0;
++    for (unsigned int i = 0; i < mixer_get_num_ctls(mixer); i++) {
++        struct mixer_ctl* ctl = mixer_get_ctl(mixer, i);
++        const char* name = mixer_ctl_get_name(ctl);
++        enum mixer_ctl_type type = mixer_ctl_get_type(ctl);
++        int value;
++        if (type == MIXER_CTL_TYPE_BOOL && !strcmp(name, "Capture Switch")) {
++            value = 1;
++        } else if (type == MIXER_CTL_TYPE_INT && !strcmp(name, "Capture Volume")) {
++            value = zero_db_value(card, ctl);
++            if (value < 0) continue;  // no dB scale: leave the level alone
++        } else if (type == MIXER_CTL_TYPE_INT && !strcmp(name, "Internal Mic Boost Volume") &&
++                   boost_prop[0]) {
++            value = atoi(boost_prop);
++            if (value > mixer_ctl_get_range_max(ctl)) value = mixer_ctl_get_range_max(ctl);
++        } else {
++            continue;
++        }
++        for (unsigned int v = 0; v < mixer_ctl_get_num_values(ctl); v++) {
++            if (mixer_ctl_set_value(ctl, v, value)) ALOGW("card%u: failed to set %s", card, name);
++        }
++        changed++;
++    }
++    return changed;
++}
++
+ static int setup_card(unsigned int card) {
+     struct mixer* mixer = mixer_open(card);
+     if (!mixer) return -1;
+@@ -70,7 +134,9 @@ static int setup_card(unsigned int card) {
+         changed++;
+     }
+ 
+-    ALOGI("card%u (%s): unmuted %u output controls", card, mixer_get_name(mixer), changed);
++    unsigned int capture = setup_capture(card, mixer);
++    ALOGI("card%u (%s): unmuted %u output controls, %u capture controls", card,
++          mixer_get_name(mixer), changed, capture);
+     mixer_close(mixer);
+     return 0;
+ }

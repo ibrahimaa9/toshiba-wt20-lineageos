@@ -1,0 +1,5 @@
+service vendor.touch-hal-wt20 /vendor/bin/hw/vendor.lineage.touch-service.wt20
+    interface aidl vendor.lineage.touch.IGloveMode/default
+    class hal
+    user system
+    group system

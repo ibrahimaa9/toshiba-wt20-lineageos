@@ -1,0 +1,3 @@
+# minigbm's allocator probes an unlabelled system property and /proc/meminfo; harmless
+dontaudit hal_graphics_allocator_default default_prop:file read;
+dontaudit hal_graphics_allocator_default proc_meminfo:file read;

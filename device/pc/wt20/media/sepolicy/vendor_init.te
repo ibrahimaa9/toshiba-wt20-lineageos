@@ -1,0 +1,2 @@
+# apply22e: vendor_init applies vendor build.prop defaults (persist.vendor.wt20.vadriver=iHD)
+set_prop(vendor_init, vendor_wt20_hwdec_prop)

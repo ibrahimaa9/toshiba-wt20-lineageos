@@ -1,0 +1,66 @@
+# WT20 tablet: join the owner's Wi-Fi and open ADB over the network once the system is up, so
+# the tablet can be worked on from another PC (its USB port is host only: no ADB over a cable).
+service wt20_remote /system/bin/sh /system/bin/wt20_remote.sh
+    user root
+    group root
+    seclabel u:r:su:s0
+    oneshot
+    disabled
+
+# Deep (S3) sleep loses the speaker amplifier (EC) and the Bluetooth adapter on this tablet;
+# s2idle keeps both (USB touchscreen: reset-resume quirk in the kernel)
+on early-boot
+    write /sys/power/mem_sleep s2idle
+    # firmware_class.path and vm.swappiness are set by wt20_remote.sh: init may not write them
+
+# sensors.iio keeps the magnetometer's hard-iron calibration here (the tablet's own magnets
+# offset it by ~100 uT), so the compass is right after a reboot without a new figure-8
+on post-fs-data
+    mkdir /data/vendor/sensors 0770 system system
+
+on property:sys.boot_completed=1
+    start wt20_remote
+    start wt20_health
+    start wt20_acwake
+
+# Health log: crashes, ANRs, SELinux denials, HAL and kernel errors, memory and thermal
+# state, 2 minutes after boot and hourly, to /data/misc/wt20-health (+ pc_logs/health);
+# tools/health-pull.sh reads them from the PC
+service wt20_health /system/bin/sh /system/bin/wt20_health.sh loop
+    user root
+    group root
+    seclabel u:r:su:s0
+    oneshot
+    disabled
+
+# Stay awake on the charger (screen off, no suspend), as Windows does on this tablet: Wi-Fi drops
+# on every suspend and WoWLAN wedges the Intel 7265. On battery the tablet sleeps normally.
+# setprop persist.wt20.ac_wake 0 turns it off.
+service wt20_acwake /system/bin/sh /system/bin/wt20_acwake.sh
+    user root
+    group root
+    seclabel u:r:su:s0
+    disabled
+
+# Webcams: the external camera provider is a lazy AIDL HAL, and cameraserver only checks
+# whether it is running instead of asking servicemanager to start it, so no camera ever showed
+# up. Start it once cameraserver is up; cameraserver then holds it for good.
+on property:init.svc.cameraserver=running
+    start vendor.camera.provider-ext
+
+# TV variant (ro.wt20.tv=1, apply20b): one-time TV setup once the setup wizard is done, and the
+# tablet's panel dark while the TV is connected (wt20_tv.sh)
+service wt20_tv /system/bin/sh /system/bin/wt20_tv.sh
+    user root
+    group root
+    seclabel u:r:su:s0
+    disabled
+
+on property:sys.boot_completed=1 && property:ro.wt20.tv=1
+    start wt20_tv
+
+# Dual boot (apply20a): "restart into Windows". PowerManager.reboot("windows") has
+# ShutdownThread set this property before it shuts the system down; GRUB then boots its Windows
+# entry once (wt20_next_os in grubenv, cleared as it is read).
+on property:sys.shutdown.requested=1windows
+    exec u:r:su:s0 root root -- /vendor/bin/grub-editenv /mnt/vendor/persist/grubenv set wt20_next_os=windows

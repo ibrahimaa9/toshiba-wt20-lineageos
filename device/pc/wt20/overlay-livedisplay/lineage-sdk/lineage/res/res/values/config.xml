@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- WT20_LIVEDISPLAY (device/pc/wt20/options.mk, apply15q): the panel has no LiveDisplay HAL;
+     picture adjustment runs in software as a colour matrix (LineageHardwareService) -->
+<resources>
+    <bool name="config_softwarePictureAdjustment">true</bool>
+</resources>

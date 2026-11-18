@@ -1,0 +1,3 @@
+# Thermal zones and cooling devices (/sys/class/thermal/* point here): plain sysfs until now.
+# The WT20 thermal HAL reads x86_pkg_temp; system_server already may read sysfs_thermal.
+genfscon sysfs /devices/virtual/thermal u:object_r:sysfs_thermal:s0

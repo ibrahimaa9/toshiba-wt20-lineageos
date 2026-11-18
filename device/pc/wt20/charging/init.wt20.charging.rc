@@ -1,0 +1,6 @@
+# WT20 charging control (apply15l): vendor.lineage.health-service.default runs as user system
+# and toggles the Toshiba EC's charge mode (80 = stop at ~80%, 100 = charge to full) through
+# this root-owned node. toshiba_acpi and the ACPI battery are built in, so it exists by boot.
+on boot
+    chown system system /sys/class/power_supply/BAT1/charge_control_end_threshold
+    chmod 0664 /sys/class/power_supply/BAT1/charge_control_end_threshold

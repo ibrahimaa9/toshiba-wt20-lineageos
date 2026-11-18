@@ -1,0 +1,15 @@
+# WT20 hardware video decode (apply17c; options.mk WT20_HW_VIDEO_DECODE): H.264 / VP8 / MPEG-2
+# through FFmpeg's VA-API hwaccel on the HD 5300 (i965_drv_video from /vendor/lib64). Runs as
+# mediacodec (sepolicy: device/pc/wt20/media/sepolicy). It registers IComponentStore/default
+# before it touches VA-API; with persist.vendor.wt20.hwdec=0 or no usable VA-API it lists no
+# components, so CCodec never waits for a missing HAL. The property is vendor_internal_prop:
+# set it as root (adb root, then adb shell setprop persist.vendor.wt20.hwdec 0, reboot).
+service vendor.media.c2.wt20 /vendor/bin/hw/android.hardware.media.c2-service-ffmpeg
+    interface aidl android.hardware.media.c2.IComponentStore/default
+    class hal
+    user media
+    group mediadrm drmrpc graphics
+    setenv LIBVA_DRIVER_NAME i965
+    setenv LIBVA_DRIVERS_PATH /vendor/lib64
+    ioprio rt 4
+    task_profiles ProcessCapacityHigh

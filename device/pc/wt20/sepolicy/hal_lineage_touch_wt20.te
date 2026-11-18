@@ -1,0 +1,12 @@
+# apply15v: vendor.lineage.touch-service.wt20 (high touch sensitivity) runs in Lineage's
+# hal_lineage_touch_default domain. It finds the Atmel mXT1664T's object protocol interface
+# (USB HID 03eb:8a55 interface 0) among /dev/hidraw* with HIDIOCGRAWINFO / HIDIOCGRDESC and
+# writes three T100 bytes into the controller's RAM.
+allow hal_lineage_touch_default hidraw_device:chr_file rw_file_perms;
+
+# DMI gate (TOSHIBA / PORTEGE WT20): /sys/devices/virtual/dmi/id
+r_dir_file(hal_lineage_touch_default, vendor_sysfs_dmi_id)
+
+# persist.vendor.wt20.glove.disable (kill switch), persist.vendor.wt20.glove.tchthr
+vendor_internal_prop(vendor_wt20_glove_prop)
+get_prop(hal_lineage_touch_default, vendor_wt20_glove_prop)

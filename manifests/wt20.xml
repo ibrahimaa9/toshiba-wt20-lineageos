@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Toshiba Portege WT20: projects on top of LOS-PC 23.2. Copy to .repo/local_manifests/wt20.xml
+     before "repo sync". Revisions are the ones the published images were built from. -->
+<manifest>
+  <!-- IIO sensors HAL for the ST HID sensor hub (patched: patches/hardware_intel_sensors-iio.patch) -->
+  <project name="LineageOS/android_hardware_intel_sensors-iio" path="hardware/intel/sensors-iio" remote="github"
+           revision="b5134567f8b8bce819b3686d045acfc120e0159f" />
+  <!-- VA-API drivers for the HD 5300 (Broadwell Gen8): i965 and iHD (Celadon's media-driver) -->
+  <project name="intel/intel-vaapi-driver" path="external/intel-vaapi-driver" remote="github"
+           revision="9a1f0c64174f970a26380d4957583c71372fbb7c" />
+  <project name="projectceladon/media-driver" path="external/intel-media-driver" remote="github"
+           revision="d9f397e0bc5729435137629060fbbe0d9c0de1b1" />
+</manifest>

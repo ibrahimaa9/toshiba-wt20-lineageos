@@ -1,0 +1,30 @@
+//
+// SPDX-FileCopyrightText: 2026 The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// Toshiba Portege WT20-B: "High touch sensitivity" (vendor.lineage.touch IGloveMode) for the
+// Atmel mXT1664T, through its object protocol interface (USB HID 03eb:8a55 interface 0,
+// hidraw). Built when WT20_TOUCH_HAL := true (device/pc/wt20/options.mk).
+cc_binary {
+    name: "vendor.lineage.touch-service.wt20",
+    init_rc: ["vendor.lineage.touch-service.wt20.rc"],
+    vintf_fragments: ["vendor.lineage.touch-service.wt20.xml"],
+    vendor: true,
+    relative_install_path: "hw",
+    srcs: [
+        "GloveMode.cpp",
+        "MxtHidraw.cpp",
+        "service.cpp",
+    ],
+    cflags: [
+        "-Wall",
+        "-Werror",
+    ],
+    shared_libs: [
+        "libbase",
+        "libbinder_ndk",
+        "liblog",
+        "vendor.lineage.touch-V1-ndk",
+    ],
+}

@@ -1,0 +1,20 @@
+//
+// SPDX-FileCopyrightText: The LineageOS Project
+// SPDX-License-Identifier: Apache-2.0
+//
+
+// Toshiba WT20 "HUD": an always-on-top performance overlay (FPS, CPU, GPU, temperatures, RAM,
+// battery). Hidden/system APIs (ServiceManager, TYPE_SECURE_SYSTEM_OVERLAY, AppOpsManager.setMode)
+// need platform_apis; INTERNAL_SYSTEM_WINDOW and HARDWARE_TEST are signature permissions, so
+// the platform certificate; START_FOREGROUND_SERVICES_FROM_BACKGROUND is privileged.
+// SELinux: sepolicy/ (system_ext private, pc_x86_64/BoardConfig.mk with WT20_PERF_HUD).
+android_app {
+    name: "WT20PerfHud",
+    srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
+    platform_apis: true,
+    certificate: "platform",
+    privileged: true,
+    system_ext_specific: true,
+    privapp_allowlist: "privapp_allowlist_org.lineageos.wt20.hud.xml",
+}

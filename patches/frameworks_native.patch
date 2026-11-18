@@ -1,0 +1,59 @@
+diff --git a/services/inputflinger/reader/mapper/TouchInputMapper.cpp b/services/inputflinger/reader/mapper/TouchInputMapper.cpp
+index a6dea4e..c4f8bd5 100644
+--- a/services/inputflinger/reader/mapper/TouchInputMapper.cpp
++++ b/services/inputflinger/reader/mapper/TouchInputMapper.cpp
+@@ -402,6 +402,9 @@ TouchInputMapper::Parameters TouchInputMapper::computeParameters(
+     parameters.enableForInactiveViewport =
+             config.getBool("touch.enableForInactiveViewport").value_or(false);
+ 
++    parameters.ignoreStationaryFrames =
++            config.getBool("touch.ignoreStationaryFrames").value_or(false);
++
+     return parameters;
+ }
+ 
+@@ -451,6 +454,8 @@ void TouchInputMapper::dumpParameters(std::string& dump) {
+                          toString(mParameters.usiVersion, toString).c_str());
+     dump += StringPrintf(INDENT4 "EnableForInactiveViewport: %s\n",
+                          toString(mParameters.enableForInactiveViewport));
++    dump += StringPrintf(INDENT4 "IgnoreStationaryFrames: %s\n",
++                         toString(mParameters.ignoreStationaryFrames));
+ }
+ 
+ void TouchInputMapper::configureRawPointerAxes() {
+@@ -1851,6 +1856,19 @@ std::list<NotifyArgs> TouchInputMapper::dispatchTouches(nsecs_t when, nsecs_t re
+ 
+     if (currentIdBits == lastIdBits) {
+         if (!currentIdBits.isEmpty()) {
++            if (mParameters.ignoreStationaryFrames && buttonState == mLastCookedState.buttonState &&
++                !updateMovedPointers(mCurrentCookedState.cookedPointerData.pointerProperties,
++                                     mCurrentCookedState.cookedPointerData.pointerCoords,
++                                     mCurrentCookedState.cookedPointerData.idToIndex,
++                                     mLastCookedState.cookedPointerData.pointerProperties,
++                                     mLastCookedState.cookedPointerData.pointerCoords,
++                                     mLastCookedState.cookedPointerData.idToIndex,
++                                     currentIdBits)) {
++                // Nothing changed: a repeated frame (e.g. the late pre-release frame of the
++                // Atmel touchscreen), not a movement. Dispatching it would tell velocity
++                // trackers the finger stopped.
++                return out;
++            }
+             // No pointer id changes so this is a move event.
+             // The listener takes care of batching moves so we don't have to deal with that here.
+             out.push_back(dispatchMotion(when, readTime, policyFlags, resolveDisplayId(),
+diff --git a/services/inputflinger/reader/mapper/TouchInputMapper.h b/services/inputflinger/reader/mapper/TouchInputMapper.h
+index 3fc7f5e..acb391e 100644
+--- a/services/inputflinger/reader/mapper/TouchInputMapper.h
++++ b/services/inputflinger/reader/mapper/TouchInputMapper.h
+@@ -245,6 +245,11 @@ protected:
+ 
+         // Allows touches while the display is off.
+         bool enableForInactiveViewport;
++
++        // Skip frames in which no touching pointer changed position or properties. Some
++        // touchscreens repeat the last position in a late frame just before the release,
++        // which velocity trackers read as the finger having stopped (no fling).
++        bool ignoreStationaryFrames;
+     } mParameters;
+ 
+     // Immutable calibration parameters in parsed form.
